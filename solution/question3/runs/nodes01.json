@@ -1,0 +1,46 @@
+{
+  "name": "nodes01",
+  "n_days": 334,
+  "sample": 1,
+  "scenarios": 12,
+  "nodes": [
+    0,
+    1
+  ],
+  "stochastic": true,
+  "seconds": 251.39988799999992,
+  "per_date": {
+    "2025-03-20": {
+      "plan_kwh": 67238.5318773908,
+      "adjusted_kwh": 65040.54424677354,
+      "emergency_kwh": 1490.846943366821,
+      "total_cost": 50608.4646476903
+    },
+    "2025-06-21": {
+      "plan_kwh": 36082.10861859084,
+      "adjusted_kwh": 36704.31193669142,
+      "emergency_kwh": 0.0,
+      "total_cost": 21794.92320131761
+    },
+    "2025-09-23": {
+      "plan_kwh": 66527.06951414404,
+      "adjusted_kwh": 67446.07715865015,
+      "emergency_kwh": 1505.8961788942433,
+      "total_cost": 51215.953961092
+    },
+    "2025-12-21": {
+      "plan_kwh": 91563.7261841593,
+      "adjusted_kwh": 94143.20122476539,
+      "emergency_kwh": 213.19907298356145,
+      "total_cost": 63023.97469059514
+    }
+  },
+  "plan_kwh": 20244071.25617884,
+  "adjusted_kwh": 21573957.665334288,
+  "emergency_kwh": 116837.96166837681,
+  "planned_cost": 12328570.80461235,
+  "reduce_penalty": -26411.617188990924,
+  "increase_cost": 1391428.9782783152,
+  "emergency_cost": 721557.6352635176,
+  "total_cost": 14415145.800965184
+}
