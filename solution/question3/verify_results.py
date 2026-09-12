@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""结果复核：校验 附件5/result3.xlsx 与题目结算规则、储能约束是否一致。
-
-注意本文件的表格布局按参考解的写法（充放电量每天 6 行、0:00 与 24:00 储电量写在
-前两行的"时刻/储电量"列；紧急购电按连续区间合并、无紧急购电的日期写"无"）。
+"""结果复核：校验 附件5/result3.xlsx 与模型、与物理约束是否一致。
 
 检查项：
-  A 文件结构；B 计划/调整表内部一致；C 充放电与 SOC 约束/递推；
-  D 由表内数据按结算规则独立重算费用；E 紧急购电表格式。
+  A 文件结构：四张表、行数、列数、标签；
+  B 计划/调整表：144 列之和 == 全天购电量、无缺失、非负；
+  C 充放电表：每日 7 行、SOC ∈ [1200, 10800]、单时段充放电 ≤ 833.3333、
+    由充放电反推的 SOC 与记录一致、日末 SOC 已记录；
+  D 费用口径：独立重算计划费用与“最终净额”敏感性口径，并核对正文逐次结算总额；
+  E 与模型重算一致：抽样若干天用 run_day 重算，与表内数值逐项比对。
 
 用法：``python verify_results.py``
 """
@@ -19,133 +20,213 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from rolling_q3 import (  # noqa: E402
-    ATT, EMIN, EMAX, ETA, LIM, N, START, LAST_DAY, price_dates, labels,
+from data_loader import (  # noqa: E402
+    ETA,
+    FILE_TEMPLATE,
+    ISSUE_SLOTS,
+    N_SLOTS,
+    P_MAX,
+    S_MAX,
+    S_MIN,
+    day_index_of,
+    load_actual,
+    load_price,
+    load_pv_forecast,
 )
+from commitment import (  # noqa: E402
+    CausalFourierLoadModel,
+    causal_load_error_pool,
+    run_day_commitment,
+)
+from scenarios import pv_error_pool  # noqa: E402
 
+DELTA_T = 1 / 6
+P_MAX_SLOT = P_MAX * DELTA_T
 PASS, FAIL = "PASS", "FAIL"
 results = []
 
 
-def check(name, ok, detail=""):
+def check(name: str, ok: bool, detail: str = ""):
     results.append((name, ok, detail))
     print(f"[{PASS if ok else FAIL}] {name}" + (f"   {detail}" if detail else ""))
 
 
-def slot_of(label: str) -> int:
-    h, m = str(label).split("-")[0].split(":")
-    return (int(h) * 60 + int(m)) // 10
-
-
 def main() -> None:
-    path = ATT / "附件5/result3.xlsx"
-    xl = pd.ExcelFile(path)
+    xl = pd.ExcelFile(FILE_TEMPLATE)
     plan = pd.read_excel(xl, "计划购电量")
     adj = pd.read_excel(xl, "调整购电量")
     blk = pd.read_excel(xl, "充放电量")
     emg = pd.read_excel(xl, "紧急购电量")
-    # 参考解写表时同一天的后续行不重复写日期（空单元格），此处前向填充
-    emg["日期"] = emg["日期"].ffill()
-    n_days = LAST_DAY - START
-    p, _ = price_dates()
-    labs = labels()
-    time_cols = list(plan.columns[1:N + 1])
+    n_days = len(plan)
 
-    check("A1 四张工作表齐全",
-          set(xl.sheet_names) == {"计划购电量", "调整购电量", "充放电量", "紧急购电量"},
+    # ---------------- A 文件结构 ----------------
+    check("A1 四张工作表齐全", set(xl.sheet_names) == {"计划购电量", "调整购电量", "充放电量", "紧急购电量"},
           str(xl.sheet_names))
-    check("A2 计划/调整表 = 334 天 × 147 列",
-          plan.shape == adj.shape == (n_days, N + 3), f"{plan.shape}")
-    check("A3 充放电表 = 334×6 行", len(blk) == n_days * 6, f"{len(blk)} 行")
+    check("A2 计划/调整表行数一致且覆盖 334 天", len(plan) == len(adj) == n_days == 334,
+          f"{n_days} 天")
+    check("A3 计划/调整表列数 = 1+144+2", plan.shape[1] == adj.shape[1] == N_SLOTS + 3,
+          f"{plan.shape[1]} 列")
+    check("A4 充放电表 = 334×7 行", len(blk) == 334 * 7, f"{len(blk)} 行")
 
+    time_cols = list(plan.columns[1:N_SLOTS + 1])
+    e_tbl = (emg.groupby(emg["日期"].astype(str))["购电量"].sum()
+             .reindex(adj["日期"].astype(str)).fillna(0.0).to_numpy(dtype=float))
+
+    # ---------------- B 计划/调整表 ----------------
     for tag, df in (("计划", plan), ("调整", adj)):
-        v = df[time_cols].to_numpy(float)
-        check(f"B1 {tag}表无缺失且非负", not np.isnan(v).any() and bool((v >= -1e-9).all()),
-              f"min = {v.min():.4f}")
-        # 参考解写表时每个数值四舍五入到 4 位小数，144 项累加误差可达 7e-3
-        gap = np.abs(v.sum(1) - df["全天购电量"].to_numpy(float)).max()
-        check(f"B2 {tag}表 144 列之和 == 全天购电量（允许 4 位小数舍入）", gap < 0.01,
-              f"max|Δ| = {gap:.2e}")
+        vals = df[time_cols].to_numpy(dtype=float)
+        check(f"B1 {tag}表无缺失值", not np.isnan(vals).any())
+        check(f"B2 {tag}表所有量非负", bool((vals >= -1e-9).all()),
+              f"min = {vals.min():.4f}")
+        gap = np.abs(vals.sum(axis=1) - df["全天购电量"].to_numpy(dtype=float)).max()
+        check(f"B3 {tag}表 144 列之和 == 全天购电量", gap < 1e-6, f"max|Δ| = {gap:.2e}")
 
-    # ---- C 充放电与 SOC ----
-    ok_soc = ok_rec = ok_pow = True
-    max_rec = 0.0
-    soc_end_all = []
-    for i in range(n_days):
-        rows = blk.iloc[i * 6:(i + 1) * 6]
-        c = rows["充电量"].to_numpy(float)
-        d = rows["放电量"].to_numpy(float)
-        s0 = float(rows.iloc[0]["储电量"])
-        s1 = float(rows.iloc[1]["储电量"])
-        if rows.iloc[0]["时刻"] != "0:00" or rows.iloc[1]["时刻"] != "24:00":
-            ok_rec = False
-        if not (EMIN - 1e-6 <= s0 <= EMAX + 1e-6 and EMIN - 1e-6 <= s1 <= EMAX + 1e-6):
-            ok_soc = False
-        if (c > LIM * 24 + 1e-6).any() or (d > LIM * 24 + 1e-6).any():
-            ok_pow = False
-        # 日末 SOC 递推：S_end = S_0 + ηΣc − Σd/η
-        max_rec = max(max_rec, abs(s0 + ETA * c.sum() - d.sum() / ETA - s1))
-        soc_end_all.append(s1)
-    check("C1 每天 6 行且含 0:00/24:00 储电量", ok_rec)
-    check("C2 单时段充放电 ≤ 833.3333 kWh", ok_pow)
-    check("C3 首末储电量均在 [1200, 10800]", ok_soc)
-    check("C4 日末储电量递推一致（S_end = S_0 + ηΣc − Σd/η）", max_rec < 1e-2,
-          f"max|Δ| = {max_rec:.2e} kWh")
-    check("C5 年末储电量在可行区间", EMIN <= soc_end_all[-1] <= EMAX,
-          f"{soc_end_all[-1]:.2f} kWh")
-
-    # ---- D 与求解器重算一致 ----
-    # 参考解的表格只保存 0:00 计划与最终承诺，中间各次调整量没有落表，
-    # 而它的主口径是"逐次结算"，因此无法只凭表内数据独立重算费用。
-    # 这里改用求解器重算若干天，与表内数值逐项比对（s0 取表内 0:00 储电量）。
-    from rolling_q3 import run_day
-    from q2_bridge import load_data, fourier
-    from forecast_analysis import load_all
-
-    L, P, _ = load_data()
-    _, F = load_all()
-    p2, dates = price_dates()
-    Lhat = np.array([fourier(L, d) if d >= 7 else L[:max(d, 1)].mean(0)
-                     for d in range(LAST_DAY)])
+    # ---------------- C 充放电表 ----------------
     days = adj["日期"].astype(str).tolist()
-    sample = ["2025-02-01", "2025-03-20", "2025-06-21", "2025-09-23", "2025-12-21"]
-    dev_plan = dev_adj = dev_emg = dev_cost = 0.0
-    for date_str in sample:
-        if date_str not in days:
+    soc_all, charge_all, discharge_all = [], [], []
+    ok_rows, ok_power, ok_soc, ok_rec = True, True, True, True
+    max_rec_err = 0.0
+    for i, date in enumerate(days):
+        block = blk.iloc[i * 7:(i + 1) * 7]
+        if len(block) != 7 or block["时间段"].iloc[0] != "0:00-4:00" or block["时刻"].iloc[6] != "24:00":
+            ok_rows = False
+        c = block["充电量"].to_numpy(dtype=float)[:6]
+        d = block["放电量"].to_numpy(dtype=float)[:6]
+        soc = np.concatenate([block["储电量"].to_numpy(dtype=float)[:6],
+                              [block["储电量"].iloc[6]]])
+        if np.isnan(c).any() or np.isnan(d).any() or np.isnan(soc).any():
+            ok_rows = False
             continue
-        row = days.index(date_str)
-        d = next(i for i, x in enumerate(dates) if str(x)[:10] == date_str)
-        s0 = float(blk.iloc[row * 6]["储电量"])
-        res = run_day(d, L, P, F, Lhat, p2, (0, 6, 12, 18), 'stochastic', s0=s0)
-        dev_plan = max(dev_plan,
-                       np.abs(res["g0"] - plan.iloc[row][time_cols].to_numpy(float)).max())
-        dev_adj = max(dev_adj,
-                      np.abs(res["gfinal"] - adj.iloc[row][time_cols].to_numpy(float)).max())
-        emg_day = emg.loc[emg["日期"].astype(str) == date_str, "购电量"].sum()
-        dev_emg = max(dev_emg, abs(res["emergency"].sum() - emg_day))
-        dev_cost = max(dev_cost, abs(res["total_cost"] - adj.iloc[row]["全天购电费"]))
-    check("D1 抽样 5 天重算：计划量逐时段一致", dev_plan < 1e-2, f"max|Δ| = {dev_plan:.2e}")
-    check("D2 抽样 5 天重算：最终承诺逐时段一致", dev_adj < 1e-2, f"max|Δ| = {dev_adj:.2e}")
-    check("D3 抽样 5 天重算：紧急购电量一致", dev_emg < 1e-2, f"max|Δ| = {dev_emg:.2e} kWh")
-    check("D4 抽样 5 天重算：总费用一致", dev_cost < 1e-2, f"max|Δ| = {dev_cost:.2e} 元")
-    check("D5 两张表的费用列同为全天总费用（参考解的写表约定）",
-          abs(float(plan["全天购电费"].sum()) - float(adj["全天购电费"].sum())) < 1e-6)
+        if (c > P_MAX_SLOT * 24 + 1e-6).any() or (d > P_MAX_SLOT * 24 + 1e-6).any():
+            ok_power = False
+        if (soc < S_MIN - 1e-6).any() or (soc > S_MAX + 1e-6).any():
+            ok_soc = False
+        # 由 4 小时段的充放电量反推下一个边界的 SOC
+        for b in range(6):
+            soc_next = soc[b] + ETA * c[b] - d[b] / ETA
+            max_rec_err = max(max_rec_err, abs(soc_next - soc[b + 1]))
+        charge_all.append(c.sum())
+        discharge_all.append(d.sum())
+        soc_all.append(soc)
 
-    # ---- E 紧急购电表格式 ----
-    daily_rows = emg.groupby(emg["日期"].astype(str)).size()
-    check("E1 每天的紧急购电记录数 == 334 天", len(daily_rows) == n_days,
-          f"{len(daily_rows)} 天")
-    check("E2 无紧急购电的日期写'无'",
-          set(emg.loc[emg["购电量"] == 0, "购电时间段"].astype(str)) <= {"无", "nan"})
+    check("C1 每天 7 行（6 段 + 24:00）", ok_rows)
+    check("C2 单时段充放电 ≤ 833.3333 kWh", ok_power)
+    check("C3 SOC 始终在 [1200, 10800]", ok_soc)
+    check("C4 由充放电反推的 SOC 与记录一致", max_rec_err < 1e-3, f"max|Δ| = {max_rec_err:.2e}")
+    year_end_soc = soc_all[-1][-1]
+    check("C5 年末 SOC 在可行区间内", S_MIN <= year_end_soc <= S_MAX, f"{year_end_soc:.2f} kWh")
 
+    # ---------------- D 费用恒等式 ----------------
+    # 只用表格自身的内容按题目结算规则独立重算，避免与具体模型绑死
+    from data_loader import load_price
+
+    price = load_price()
+
+    def label_to_slot(label: str) -> int:
+        start = str(label).split("-")[0]
+        h, m = start.split(":")
+        return (int(h) * 60 + int(m)) // 10
+
+    emg_slot = np.zeros((n_days, N_SLOTS))
+    dup = 0
+    for _, row in emg.iterrows():
+        date = str(row["日期"])
+        if date not in days:
+            continue
+        i = days.index(date)
+        s = label_to_slot(row["购电时间段"])
+        if 0 <= s < N_SLOTS:
+            if emg_slot[i, s] != 0:
+                dup += 1
+            emg_slot[i, s] += float(row["购电量"])
+
+    planned_cost = 0.0
+    final_net_cost = 0.0
+    recomputed_plan = 0.0
+    recomputed_total = 0.0
+    for i in range(n_days):
+        g0 = plan.iloc[i][time_cols].to_numpy(dtype=float)
+        ga = adj.iloc[i][time_cols].to_numpy(dtype=float)
+        u = np.maximum(0.0, g0 - ga)
+        v = np.maximum(0.0, ga - g0)
+        planned_cost += float(g0 @ price)
+        # 结算规则：计划按原价支付；调减退回原价并承担 50% 违约成本（即 -0.5p·u）；
+        # 调增超出部分按 1.5 倍；缺额按 5 倍紧急购电
+        final_net_cost += float(
+            g0 @ price
+            - 0.5 * (u @ price)
+            + 1.5 * (v @ price)
+            + 5 * (emg_slot[i] @ price)
+        )
+        recomputed_plan += g0.sum()
+        recomputed_total += ga.sum()
+
+    sheet_plan_cost = float(plan["全天购电费"].sum())
+    sheet_total_cost = float(adj["全天购电费"].sum())
+    emg_kwh = float(emg["购电量"].sum())
+    check("D1 由表内计划量独立重算的计划费用 == 计划表费用",
+          abs(planned_cost - sheet_plan_cost) < 1.0,
+          f"重算 {planned_cost:,.2f} vs 表 {sheet_plan_cost:,.2f} 元")
+    # 模板只保存初始计划和最终调整量，无法从表内恢复 6/12/18 时的每次中间
+    # 修订。因此 final_net_cost 是敏感性口径；正文逐次结算总额由 E 项按模型
+    # 重放核验。两者必须明确区分，不能把口径差异当作算法收益。
+    check("D2 正文逐次结算总额为 13,706,868.38 元",
+          abs(sheet_total_cost - 13_706_868.3759739) < 1.0,
+          f"表 {sheet_total_cost:,.2f} 元")
+    check("D3 最终净额口径敏感性费用为 13,632,338.81 元",
+          abs(final_net_cost - 13_632_338.8122141) < 1.0,
+          f"重算 {final_net_cost:,.2f} 元")
+    check("D4 计划量列和 == 计划表全天购电量", abs(recomputed_plan - plan["全天购电量"].sum()) < 1e-6)
+    check("D5 调整量列和 == 调整表全天购电量", abs(recomputed_total - adj["全天购电量"].sum()) < 1e-6)
+    check("D6 紧急购电记录均为正值且每天同一时段不重复", bool((emg["购电量"] > 0).all()) and dup == 0)
+    check("D7 紧急购电合计为有限正值", np.isfinite(emg_kwh) and emg_kwh > 0,
+          f"{emg_kwh / 1e4:.4f} 万 kWh")
+
+    # ---------------- E 与模型重算一致 ----------------
+    dates, load, pv = load_actual()
+    _, fc = load_pv_forecast()
+    price = load_price()
+    model = CausalFourierLoadModel(dates, load)
+    load_err = causal_load_error_pool(model, dates, load)
+    pv_err = tuple(pv_error_pool(pv, fc, i, method="linear") for i in range(4))
+
+    sample = ["2025-02-01", "2025-03-20", "2025-06-21", "2025-09-23", "2025-12-21"]
+    max_plan_dev = max_adj_dev = max_cost_dev = max_soc_dev = max_emg_dev = 0.0
+    for date in sample:
+        row = days.index(date)
+        day = day_index_of(dates, date)
+        s_init = soc_all[row][0]
+        load_fc, _ = model.predict(date)
+        res = run_day_commitment(
+            day=day, dates=dates, load_actual=load, pv_actual=pv, pv_fc_day=fc[day],
+            price=price, load_fc=load_fc, load_err=load_err, pv_err_pools=pv_err,
+            n_scenarios=5, lookback=90, s_init=s_init,
+        )
+        max_plan_dev = max(max_plan_dev,
+                           np.abs(res["plan"] - plan.iloc[row][time_cols].to_numpy(float)).max())
+        max_adj_dev = max(max_adj_dev,
+                          np.abs(res["adjusted"] - adj.iloc[row][time_cols].to_numpy(float)).max())
+        max_cost_dev = max(max_cost_dev,
+                           abs(res["total_cost"] - adj.iloc[row]["全天购电费"]))
+        soc_tbl = np.concatenate([blk.iloc[row * 7:row * 7 + 6]["储电量"].to_numpy(float),
+                                  [blk.iloc[row * 7 + 6]["储电量"]]])
+        max_soc_dev = max(max_soc_dev, np.abs(res["soc"][::24] - soc_tbl).max())
+        max_emg_dev = max(max_emg_dev, abs(res["emergency_kwh"] - e_tbl[row]))
+    check("E1 抽样 5 天重算：计划量逐时段一致", max_plan_dev < 1e-4, f"max|Δ| = {max_plan_dev:.2e}")
+    check("E2 抽样 5 天重算：调整量逐时段一致", max_adj_dev < 1e-4, f"max|Δ| = {max_adj_dev:.2e}")
+    check("E3 抽样 5 天重算：总费用一致", max_cost_dev < 0.01, f"max|Δ| = {max_cost_dev:.2e} 元")
+    check("E4 抽样 5 天重算：SOC 轨迹一致", max_soc_dev < 1e-3, f"max|Δ| = {max_soc_dev:.2e} kWh")
+    check("E5 抽样 5 天重算：紧急购电量一致", max_emg_dev < 1e-4, f"max|Δ| = {max_emg_dev:.2e} kWh")
+
+    # ---------------- 汇总 ----------------
     bad = [r for r in results if not r[1]]
     print("\n" + "=" * 62)
-    print(f"共 {len(results)} 项，通过 {len(results) - len(bad)}，失败 {len(bad)}")
-    for name, _, detail in bad:
-        print(f"  FAIL: {name} {detail}")
+    print(f"共 {len(results)} 项检查，通过 {len(results) - len(bad)} 项，失败 {len(bad)} 项")
+    if bad:
+        for name, _, detail in bad:
+            print(f"  FAIL: {name} {detail}")
     print("=" * 62)
 
 
