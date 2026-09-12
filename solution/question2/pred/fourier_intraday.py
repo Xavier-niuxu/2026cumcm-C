@@ -5,11 +5,11 @@ Extends the base FourierPredictor by adding sin/cos terms for the within-day
 cycle (period = 144 slots = 24 hours).
 
 Feature vector x(d, t):
-  - Day-level (12): 1, e_0..e_6, sin(2pi*d/365), cos(2pi*d/365),
+  - Day-level (11): e_0..e_6, sin(2pi*d/365), cos(2pi*d/365),
                     sin(4pi*d/365), cos(4pi*d/365)
   - Intraday (2*K): sin(2*pi*k*t/144), cos(2*pi*k*t/144) for k=1..K
 
-Total features: 12 + 2*K
+Total features: 11 + 2*K
 
 Training: flatten all (day, slot) pairs, single OLS.
 """
@@ -55,7 +55,7 @@ class FourierIntradayPredictor(BasePredictor):
 
         # Precompute intraday basis: (144, 2*K)
         self._intra_basis = self._build_intraday_basis()
-        self.n_features = 12 + 2 * n_intraday
+        self.n_features = 11 + 2 * n_intraday
 
     def _build_intraday_basis(self) -> np.ndarray:
         """(144, 2*K) matrix of intraday sin/cos terms."""
@@ -87,12 +87,12 @@ class FourierIntradayPredictor(BasePredictor):
 
         beta = self._fit(train)  # (n_features,)
         # pred(t) = day_features(idx) @ beta_day + intra_basis(t) @ beta_intra
-        day_feat = self._day_features(idx)  # (12,)
-        pred = day_feat @ beta[:12] + self._intra_basis @ beta[12:]
+        day_feat = self._day_features(idx)  # (11,)
+        pred = day_feat @ beta[:11] + self._intra_basis @ beta[11:]
         return np.asarray(pred, dtype=float), np.zeros(N_SLOTS)
 
     def _day_features(self, idx: int) -> np.ndarray:
-        """(12,) day-level feature vector."""
+        """(11,) day-level feature vector."""
         return build_design(np.array([idx]), np.array([self._weekday[idx]])).ravel()
 
     def _fit(self, rows: np.ndarray) -> np.ndarray:
@@ -101,13 +101,13 @@ class FourierIntradayPredictor(BasePredictor):
         n_feat = self.n_features
 
         # Build design matrix: (n_days * 144, n_feat)
-        day_X = build_design(rows, self._weekday[rows])  # (n_days, 12)
+        day_X = build_design(rows, self._weekday[rows])  # (n_days, 11)
 
         # Full design: each row is [day_feat(d), intra_basis(t)]
         X = np.zeros((n_days * N_SLOTS, n_feat))
         for i in range(n_days):
-            X[i * N_SLOTS:(i + 1) * N_SLOTS, :12] = day_X[i]
-            X[i * N_SLOTS:(i + 1) * N_SLOTS, 12:] = self._intra_basis
+            X[i * N_SLOTS:(i + 1) * N_SLOTS, :11] = day_X[i]
+            X[i * N_SLOTS:(i + 1) * N_SLOTS, 11:] = self._intra_basis
 
         Y = self.net[rows].ravel()  # (n_days * 144,)
 

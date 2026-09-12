@@ -165,19 +165,21 @@ $\varepsilon = 10^{-7}$ 为极小的退化惩罚系数，用于避免求解器�
 
 \textbf{特征设计：}
 
-对于第 $d$ 天，构建12维特征向量 $\mathbf{x}_d$：
+对于第 $d$ 天，构建11维特征向量 $\mathbf{x}_d$：
 
 \begin{equation}
-    \mathbf{x}_d = \left[1,\; e_0, e_1, \ldots, e_6,\; \sin\frac{2\pi d}{365},\; \cos\frac{2\pi d}{365},\; \sin\frac{4\pi d}{365},\; \cos\frac{4\pi d}{365}\right]^T
+    \mathbf{x}_d = \left[e_0, e_1, \ldots, e_6,\; \sin\frac{2\pi d}{365},\; \cos\frac{2\pi d}{365},\; \sin\frac{4\pi d}{365},\; \cos\frac{4\pi d}{365}\right]^T
 \end{equation}
 
 各特征含义如下：
 \begin{itemize}
-    \item $1$：截距项；
     \item $e_0, \ldots, e_6$：星期独热编码（$e_0$=周一，\ldots，$e_6$=周日），恰好有一个为1；
     \item $\sin(2\pi d/365), \cos(2\pi d/365)$：年度谐波，捕获季节性变化；
     \item $\sin(4\pi d/365), \cos(4\pi d/365)$：半年谐波，捕获更精细的季节性波动。
 \end{itemize}
+
+注：不设置截距项，因为星期独热编码之和恒等于1，与截距项线性相关（虚拟变量陷阱）。
+删除截距项后，设计矩阵满秩，数值稳定性更好。
 
 \textbf{分时段独立回归：}
 

@@ -116,7 +116,7 @@ def build_predictors(dates_load, load_data, dates_pv, pv_data):
         "LastWeek (t-7)": base(LastWeekPredictor),
         "WeightedAverage 4:3:2:1": base(WeightedAveragePredictor),
         "LinearFit (4 same weekdays)": base(LinearFitPredictor),
-        "Fourier (12 features)": base(FourierPredictor),
+        "Fourier (11 features)": base(FourierPredictor),
         "Fourier+Intraday (K=6)": FourierIntradayPredictor(
             dates_load, load_data, dates_pv, pv_data, n_intraday=6
         ),
@@ -195,7 +195,7 @@ def main():
     print_table(results)
 
     print("\npaired daily-cost comparisons (negative = first model cheaper):")
-    ref = "Fourier (12 features)"
+    ref = "Fourier (11 features)"
     for name in results:
         if name != ref:
             paired(results, ref, name)

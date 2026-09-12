@@ -45,27 +45,30 @@ from .base import BasePredictor
 
 PERIOD = 365.0          # days, annual harmonic
 N_SLOTS = 144           # 10-minute slots per day
-N_FEATURES = 12         # 1 intercept + 7 weekday + 2*2 harmonics
+N_FEATURES = 11         # 7 weekday + 2*2 harmonics (no intercept to avoid dummy variable trap)
 
 
 def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
-    """Return the (n, 12) Fourier design matrix for the given days.
+    """Return the (n, 11) Fourier design matrix for the given days.
 
     Args:
         day_index: 0-based day index used for the harmonic terms.
         weekday:   Monday-based weekday (0..6) used for the one-hot block.
+    
+    Note:
+        Intercept column is omitted to avoid the dummy variable trap
+        (weekday one-hot columns sum to 1, which is collinear with intercept).
     """
     day_index = np.asarray(day_index, dtype=float)
     weekday = np.asarray(weekday, dtype=int)
     n = day_index.size
 
     X = np.zeros((n, N_FEATURES), dtype=float)
-    X[:, 0] = 1.0
-    X[np.arange(n), 1 + weekday] = 1.0
-    X[:, 8] = np.sin(2 * np.pi * day_index / PERIOD)
-    X[:, 9] = np.cos(2 * np.pi * day_index / PERIOD)
-    X[:, 10] = np.sin(4 * np.pi * day_index / PERIOD)
-    X[:, 11] = np.cos(4 * np.pi * day_index / PERIOD)
+    X[np.arange(n), weekday] = 1.0  # columns 0-6: weekday one-hot
+    X[:, 7] = np.sin(2 * np.pi * day_index / PERIOD)
+    X[:, 8] = np.cos(2 * np.pi * day_index / PERIOD)
+    X[:, 9] = np.sin(4 * np.pi * day_index / PERIOD)
+    X[:, 10] = np.cos(4 * np.pi * day_index / PERIOD)
     return X
 
 
