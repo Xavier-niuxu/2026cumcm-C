@@ -55,6 +55,7 @@ def run_day(
     soc_floor: float = 1200.0,
     soc_ceil: float = 10800.0,
     p_max_slot: float = 833.3333333333334,
+    settlement_price: np.ndarray | None = None,
 ) -> dict:
     """Run one day and return the full plan / execution / settlement.
 
@@ -63,6 +64,12 @@ def run_day(
         ``"realtime"``  实际执行时按 **当前 10 min 的真实缺额**驱动储能
         （缺电则放电、富余则充电，受功率与 SOC 限制），只有储能无能为力时
         才紧急购电。后者对应参考解 "因果实时储能执行" 的口径。
+
+    ``settlement_price``：
+        结算电价（144,）。``price`` 始终是**计划电价**（进入 MPC 目标函数，
+        决定何时买电/储电）；给出 ``settlement_price`` 时，计划购电费、调减
+        违约金、调增购电费与紧急购电费全部按该实际电价结算。``None`` 时退回
+        问题 3 的固定电价口径（结算价 = 计划价）。
     """
     nodes = tuple(sorted(set(nodes)))
     if 0 not in nodes:
@@ -165,14 +172,15 @@ def run_day(
     #   调增费用    = +1.5*p*max(0, ga-g0)   （超出部分按 1.5 倍支付）
     #   紧急购电费  = 5*p*e
     # 合计 = Σ [p*ga + 0.5*p*|g0-ga|] + 5*p*e
-    planned_cost = float(np.dot(price, plan))
+    settle = price if settlement_price is None else np.asarray(settlement_price)
+    planned_cost = float(np.dot(settle, plan))
     reduce_penalty = -float(
-        np.dot(price, PLAN_REDUCE_REFUND * np.maximum(0.0, plan - ga))
+        np.dot(settle, PLAN_REDUCE_REFUND * np.maximum(0.0, plan - ga))
     )
     increase_cost = float(
-        np.dot(price, PLAN_INCREASE_RATE * np.maximum(0.0, ga - plan))
+        np.dot(settle, PLAN_INCREASE_RATE * np.maximum(0.0, ga - plan))
     )
-    emergency_cost = float(np.dot(price, EMERGENCY_MULTIPLIER * emergency))
+    emergency_cost = float(np.dot(settle, EMERGENCY_MULTIPLIER * emergency))
     total = planned_cost + reduce_penalty + increase_cost + emergency_cost
 
     return {

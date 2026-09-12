@@ -13,11 +13,25 @@ from data_loader import (
     get_day_data,
     get_date_index,
 )
-from prediction import WeightedAveragePredictor, LastWeekPredictor, LinearFitPredictor, BasePredictor
-from cost import calculate_cost
+from prediction import (
+    WeightedAveragePredictor,
+    LastWeekPredictor,
+    LinearFitPredictor,
+    FourierLagQuantilePredictor,
+    BasePredictor,
+)
+from cost import calculate_cost, S_INIT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件5" / "result2.xlsx"
+
+# Tuned day-ahead planning band.
+# The LP plans from a band narrower than the physical [1200, 10800] so that the
+# battery keeps headroom to absorb forecast error in real time, and it is asked
+# to end the day with at least S_END_MIN so the next morning starts with a
+# usable reserve.  Real-time dispatch still uses the physical limits.
+S_MAX_PLAN = 10400.0
+S_END_MIN = 2500.0
 
 # Time period labels for 4h blocks
 TIME_BLOCKS = ["0:00-4:00", "4:00-8:00", "8:00-12:00",
@@ -33,12 +47,24 @@ def run_question2_single_date(
     dates_pv: np.ndarray,
     pv_data: np.ndarray,
     price: np.ndarray,
+    s_init: float = S_INIT,
+    s_max_plan: float = S_MAX_PLAN,
+    s_end_min: float = S_END_MIN,
 ):
-    """Run question 2 for a single date. Returns LPResult and date string."""
+    """Run question 2 for a single date. Returns LPResult and date string.
+
+    ``s_init`` is the battery SOC at 0:00 of ``target_date``; it is the previous
+    day's closing SOC so that the storage state stays continuous across days.
+    ``s_max_plan`` / ``s_end_min`` define the day-ahead planning band and
+    terminal reserve (see the module constants).
+    """
     load_pred, pv_pred = predictor.predict(target_date)
     load_actual = get_day_data(dates_load, load_data, target_date)
     pv_actual = get_day_data(dates_pv, pv_data, target_date)
-    result = calculate_cost(price, load_pred, pv_pred, load_actual, pv_actual)
+    result = calculate_cost(
+        price, load_pred, pv_pred, load_actual, pv_actual,
+        s_init=s_init, s_end_min=s_end_min, s_max_plan=s_max_plan,
+    )
     return result
 
 
@@ -97,12 +123,17 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
     emergency_cost_all = np.zeros(n_days)
 
     # Process each day
+    # The battery SOC is continuous across days: only 2025-01-01 0:00 is fixed at
+    # 6000 kWh by the problem statement, so each day inherits the previous day's
+    # closing SOC (the 24:00 value) as its starting SOC.
+    soc_carry = S_INIT
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
         target_date = str(dates_load[idx])[:10]
 
         try:
             result = run_question2_single_date(
-                target_date, predictor, dates_load, load_data, dates_pv, pv_data, price
+                target_date, predictor, dates_load, load_data, dates_pv, pv_data,
+                price, s_init=soc_carry,
             )
 
             grid_purchase_all[i] = result.grid_purchase
@@ -113,6 +144,8 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
             soc_all[i, 144] = result.soc_end[-1]
             normal_cost_all[i] = result.normal_cost
             emergency_cost_all[i] = result.emergency_cost
+
+            soc_carry = float(result.soc_end[-1])
 
             if (i + 1) % 30 == 0:
                 print(f"Processed {i + 1} days... (current: {target_date})")
@@ -211,6 +244,10 @@ if __name__ == "__main__":
     dates_load, load_data = load_historical_load()
     dates_pv, pv_data = load_historical_pv()
 
-    # 使用上周同日预测方法
-    predictor = LastWeekPredictor(dates_load, load_data, dates_pv, pv_data)
+    # 傅里叶 + 净负荷滞后项预测 + 新闻童分位安全边际
+    # （紧急购电价 = 5 倍正常电价，故日前计划量取净负荷的高分位数而非均值）
+    predictor = FourierLagQuantilePredictor(
+        dates_load, load_data, dates_pv, pv_data,
+        lags=(1, 2, 3), quantile=0.75, residual_days=30,
+    )
     run_question2_full_year(predictor)

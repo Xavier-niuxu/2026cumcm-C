@@ -5,11 +5,12 @@ Extends the base FourierPredictor by adding sin/cos terms for the within-day
 cycle (period = 144 slots = 24 hours).
 
 Feature vector x(d, t):
-  - Day-level (11): e_0..e_6, sin(2pi*d/365), cos(2pi*d/365),
+  - Day-level (N_DAY_FEATURES = 12): intercept, e_0..e_6,
+                    sin(2pi*d/365), cos(2pi*d/365),
                     sin(4pi*d/365), cos(4pi*d/365)
   - Intraday (2*K): sin(2*pi*k*t/144), cos(2*pi*k*t/144) for k=1..K
 
-Total features: 11 + 2*K
+Total features: N_DAY_FEATURES + 2*K
 
 Training: flatten all (day, slot) pairs, single OLS.
 """
@@ -20,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BasePredictor
-from .fourier import build_design, N_SLOTS, PERIOD
+from .fourier import build_design, N_SLOTS, PERIOD, N_FEATURES as N_DAY_FEATURES
 
 
 class FourierIntradayPredictor(BasePredictor):
@@ -55,7 +56,7 @@ class FourierIntradayPredictor(BasePredictor):
 
         # Precompute intraday basis: (144, 2*K)
         self._intra_basis = self._build_intraday_basis()
-        self.n_features = 11 + 2 * n_intraday
+        self.n_features = N_DAY_FEATURES + 2 * n_intraday
 
     def _build_intraday_basis(self) -> np.ndarray:
         """(144, 2*K) matrix of intraday sin/cos terms."""
@@ -87,12 +88,13 @@ class FourierIntradayPredictor(BasePredictor):
 
         beta = self._fit(train)  # (n_features,)
         # pred(t) = day_features(idx) @ beta_day + intra_basis(t) @ beta_intra
-        day_feat = self._day_features(idx)  # (11,)
-        pred = day_feat @ beta[:11] + self._intra_basis @ beta[11:]
+        day_feat = self._day_features(idx)  # (N_DAY_FEATURES,)
+        pred = (day_feat @ beta[:N_DAY_FEATURES]
+                + self._intra_basis @ beta[N_DAY_FEATURES:])
         return np.asarray(pred, dtype=float), np.zeros(N_SLOTS)
 
     def _day_features(self, idx: int) -> np.ndarray:
-        """(11,) day-level feature vector."""
+        """(N_DAY_FEATURES,) day-level feature vector."""
         return build_design(np.array([idx]), np.array([self._weekday[idx]])).ravel()
 
     def _fit(self, rows: np.ndarray) -> np.ndarray:
@@ -101,13 +103,13 @@ class FourierIntradayPredictor(BasePredictor):
         n_feat = self.n_features
 
         # Build design matrix: (n_days * 144, n_feat)
-        day_X = build_design(rows, self._weekday[rows])  # (n_days, 11)
+        day_X = build_design(rows, self._weekday[rows])  # (n_days, N_DAY_FEATURES)
 
         # Full design: each row is [day_feat(d), intra_basis(t)]
         X = np.zeros((n_days * N_SLOTS, n_feat))
         for i in range(n_days):
-            X[i * N_SLOTS:(i + 1) * N_SLOTS, :11] = day_X[i]
-            X[i * N_SLOTS:(i + 1) * N_SLOTS, 11:] = self._intra_basis
+            X[i * N_SLOTS:(i + 1) * N_SLOTS, :N_DAY_FEATURES] = day_X[i]
+            X[i * N_SLOTS:(i + 1) * N_SLOTS, N_DAY_FEATURES:] = self._intra_basis
 
         Y = self.net[rows].ravel()  # (n_days * 144,)
 

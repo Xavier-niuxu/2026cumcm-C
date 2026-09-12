@@ -25,7 +25,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cost import calculate_cost  # noqa: E402
+from cost import calculate_cost, S_INIT  # noqa: E402
 from data_loader import (  # noqa: E402
     load_fixed_price,
     load_historical_load,
@@ -34,6 +34,7 @@ from data_loader import (  # noqa: E402
 from prediction import (  # noqa: E402
     FourierPredictor,
     FourierIntradayPredictor,
+    FourierLagQuantilePredictor,
     FourierQuantilePredictor,
     LastWeekPredictor,
     LinearFitPredictor,
@@ -43,6 +44,12 @@ from prediction import (  # noqa: E402
 START_DATE = "2025-02-01"
 END_DATE = "2025-12-31"
 EMERGENCY_MULTIPLIER = 5.0
+
+# Decision rule shared by every predictor so the comparison isolates forecast
+# quality: plan from a band narrower than the physical [1200, 10800] and end the
+# day with a reserve (see main.py).
+S_MAX_PLAN = 10400.0
+S_END_MIN = 2500.0
 
 
 class ScalingPredictor:
@@ -58,12 +65,33 @@ class ScalingPredictor:
         return load_pred * self.load_scale, pv_pred * self.pv_scale
 
 
+class PointOnly:
+    """Strip the newsboy margin off a quantile predictor.
+
+    The MAE table must compare *point* forecasts, otherwise the additive safety
+    margin (which is deliberately biased high) would inflate the reported error.
+    """
+
+    def __init__(self, predictor):
+        self.predictor = predictor
+
+    def predict(self, date_str):
+        p = self.predictor
+        idx = p._row(date_str)
+        return p._point(idx), np.zeros(p.net.shape[1])
+
+
 def evaluate(predictor, dates, load, pv, price, verbose=False):
-    """Return a dict of accuracy + cost metrics for one predictor."""
+    """Return a dict of accuracy + cost metrics for one predictor.
+
+    The battery SOC is carried across days (only 2025-01-01 0:00 is fixed at
+    6000 kWh), matching the production settlement in ``main.py``.
+    """
     net_actual = load - pv
     forecast_err, actuals = [], []
     daily_cost, daily_mae, stamps = [], [], []
     plan_kwh = emergency_kwh = normal_cost = emergency_cost = 0.0
+    soc_carry = S_INIT
     t0 = time.time()
 
     for i, date_str in enumerate(dates):
@@ -76,7 +104,11 @@ def evaluate(predictor, dates, load, pv, price, verbose=False):
         actuals.append(net_actual[i])
         daily_mae.append(np.abs(err).mean())
 
-        res = calculate_cost(price, load_pred, pv_pred, load[i], pv[i])
+        res = calculate_cost(
+            price, load_pred, pv_pred, load[i], pv[i], s_init=soc_carry,
+            s_end_min=S_END_MIN, s_max_plan=S_MAX_PLAN,
+        )
+        soc_carry = float(res.soc_end[-1])
         plan_kwh += res.grid_purchase.sum()
         emergency_kwh += res.emergency_purchase.sum()
         normal_cost += res.normal_cost
@@ -116,9 +148,19 @@ def build_predictors(dates_load, load_data, dates_pv, pv_data):
         "LastWeek (t-7)": base(LastWeekPredictor),
         "WeightedAverage 4:3:2:1": base(WeightedAveragePredictor),
         "LinearFit (4 same weekdays)": base(LinearFitPredictor),
-        "Fourier (11 features)": base(FourierPredictor),
+        "Fourier (12 features)": base(FourierPredictor),
         "Fourier+Intraday (K=6)": FourierIntradayPredictor(
             dates_load, load_data, dates_pv, pv_data, n_intraday=6
+        ),
+        "Fourier+Lag (12+3)": PointOnly(
+            FourierLagQuantilePredictor(
+                dates_load, load_data, dates_pv, pv_data,
+                lags=(1, 2, 3), quantile=0.75, residual_days=30,
+            )
+        ),
+        "Fourier+Lag+q0.75 (final)": FourierLagQuantilePredictor(
+            dates_load, load_data, dates_pv, pv_data,
+            lags=(1, 2, 3), quantile=0.75, residual_days=30,
         ),
     }
 
@@ -195,7 +237,7 @@ def main():
     print_table(results)
 
     print("\npaired daily-cost comparisons (negative = first model cheaper):")
-    ref = "Fourier (11 features)"
+    ref = "Fourier (12 features)"
     for name in results:
         if name != ref:
             paired(results, ref, name)

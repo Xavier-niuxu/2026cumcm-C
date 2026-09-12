@@ -122,5 +122,10 @@ class LinearFitPredictor(BasePredictor):
 # FourierPredictor lives in the pred/ package (pred/fourier.py); re-export it
 # here so `from prediction import FourierPredictor` keeps working, since
 # main.py imports the flat module rather than the package.
-from pred.fourier import FourierPredictor, FourierQuantilePredictor  # noqa: E402,F401
+from pred.fourier import (  # noqa: E402,F401
+    FourierPredictor,
+    FourierQuantilePredictor,
+    FourierLagQuantilePredictor,
+)
 from pred.fourier_intraday import FourierIntradayPredictor  # noqa: E402,F401
+from pred.price_fourier import PriceFourierPredictor  # noqa: E402,F401

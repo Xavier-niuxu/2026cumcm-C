@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Question 4 main entry point: time-varying price with Fourier predictor."""
+"""Question 4 (as Question 2) main entry point: time-varying price.
+
+The model keeps the Question 2 two-stage structure and only swaps the price
+for the 附件4 time-varying curve:
+
+* the day-ahead LP plans the purchase on the *forecast* net load and the
+  *forecast* price (``PriceFourierPredictor``);
+* real-time settlement bills the planned quantity at the *actual* 附件4 price,
+  flexes the battery against the realised net load and buys the residual
+  shortfall as emergency power at 5x the actual price.
+"""
 
 from pathlib import Path
 
@@ -14,11 +24,18 @@ from data_loader import (
     get_day_price,
     get_date_index,
 )
-from prediction import FourierPredictor, BasePredictor
-from cost import calculate_cost
+from prediction import FourierLagQuantilePredictor, BasePredictor, PriceFourierPredictor
+from cost import calculate_cost, S_INIT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件5" / "result4-2.xlsx"
+
+# Same day-ahead planning band as Question 2 (see question2/main.py): the LP
+# plans from a band narrower than the physical [1200, 10800] so the battery
+# keeps headroom to absorb forecast error in real time, and it is asked to end
+# the day with at least S_END_MIN so the next morning starts with a reserve.
+S_MAX_PLAN = 10400.0
+S_END_MIN = 2500.0
 
 # Time period labels for 4h blocks
 TIME_BLOCKS = ["0:00-4:00", "4:00-8:00", "8:00-12:00",
@@ -29,49 +46,34 @@ SOC_TIMES = ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]
 def run_question4_single_date(
     target_date: str,
     predictor: BasePredictor,
+    price_predictor: PriceFourierPredictor,
     dates_load: np.ndarray,
     load_data: np.ndarray,
     dates_pv: np.ndarray,
     pv_data: np.ndarray,
     dates_price: np.ndarray,
     price_data: np.ndarray,
+    s_init: float = S_INIT,
+    s_max_plan: float = S_MAX_PLAN,
+    s_end_min: float = S_END_MIN,
 ):
-    """Run question 4 for a single date. Returns LPResult and date string."""
+    """Run question 4 for a single date. Returns LPResult.
+
+    ``s_init`` is the battery SOC at 0:00 of ``target_date``; it is the previous
+    day's closing SOC so that the storage state stays continuous across days.
+    The forecast price drives the day-ahead plan, the actual 附件4 price settles
+    both the normal and the emergency bill.
+    """
     load_pred, pv_pred = predictor.predict(target_date)
+    price_pred = price_predictor.predict(target_date)
     load_actual = get_day_data(dates_load, load_data, target_date)
     pv_actual = get_day_data(dates_pv, pv_data, target_date)
-    price = get_day_price(dates_price, price_data, target_date)
-    result = calculate_cost(price, load_pred, pv_pred, load_actual, pv_actual)
-    return result
-
-
-def _generate_time_columns():
-    """Generate 144 time slot column labels matching the template order.
-    
-    Template order: 0:10-0:20, 0:20-0:30, ..., 23:50-0:00+1, 0:00-0:10+1
-    This means slots 1-143 first, then slot 0 at the end.
-    """
-    cols = []
-    for i in range(1, 144):  # slots 1 to 143
-        start_min = i * 10
-        end_min = (i + 1) * 10
-        sh, sm = divmod(start_min, 60)
-        eh, em = divmod(end_min, 60)
-        if eh == 24:
-            cols.append(f"{sh}:{sm:02d}-0:00+1")
-        else:
-            cols.append(f"{sh}:{sm:02d}-{eh}:{em:02d}")
-    # Add slot 0 at the end
-    cols.append("0:00-0:10+1")
-    return cols
-
-
-def _reorder_to_template(arr_144):
-    """Reorder array from natural order (0-143) to template order (1-143, then 0)."""
-    result = np.zeros_like(arr_144)
-    result[:143] = arr_144[1:144]  # slots 1-143
-    result[143] = arr_144[0]       # slot 0 at the end
-    return result
+    price_actual = get_day_price(dates_price, price_data, target_date)
+    return calculate_cost(
+        price_pred, load_pred, pv_pred, load_actual, pv_actual,
+        settlement_price=price_actual,
+        s_init=s_init, s_end_min=s_end_min, s_max_plan=s_max_plan,
+    )
 
 
 def _aggregate_4h_blocks(arr_144):
@@ -92,6 +94,8 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
     dates_pv, pv_data = load_historical_pv()
     dates_price, price_data = load_time_varying_price()
 
+    price_predictor = PriceFourierPredictor(dates_price, price_data)
+
     start_date = "2025-02-01"
     end_date = "2025-12-31"
     start_idx = get_date_index(dates_load, start_date)
@@ -100,7 +104,9 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
 
     print(f"Processing {n_days} days from {start_date} to {end_date}...\n")
 
-    # Read template to get column structure
+    # Read template to get column structure.  The 144 slot labels of 附件1/附件4
+    # ("0:10" ... "0:00+1") are identical to the template's, so the arrays are
+    # written in their natural order -- no reordering is needed.
     template = pd.read_excel(OUTPUT_FILE, sheet_name="计划购电量")
     time_cols = list(template.columns[1:145])  # 144 time slot columns
 
@@ -113,14 +119,18 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
     normal_cost_all = np.zeros(n_days)
     emergency_cost_all = np.zeros(n_days)
 
-    # Process each day
+    # The battery SOC is continuous across days: only 2025-01-01 0:00 is fixed at
+    # 6000 kWh by the problem statement, so each day inherits the previous day's
+    # closing SOC (the 24:00 value) as its starting SOC.
+    soc_carry = S_INIT
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
         target_date = str(dates_load[idx])[:10]
 
         try:
             result = run_question4_single_date(
-                target_date, predictor, dates_load, load_data, dates_pv, pv_data,
-                dates_price, price_data
+                target_date, predictor, price_predictor,
+                dates_load, load_data, dates_pv, pv_data,
+                dates_price, price_data, s_init=soc_carry,
             )
 
             grid_purchase_all[i] = result.grid_purchase
@@ -132,6 +142,8 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
             normal_cost_all[i] = result.normal_cost
             emergency_cost_all[i] = result.emergency_cost
 
+            soc_carry = float(result.soc_end[-1])
+
             if (i + 1) % 30 == 0:
                 print(f"Processed {i + 1} days... (current: {target_date})")
 
@@ -141,9 +153,7 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
     # === Write Sheet 1: 计划购电量 ===
     print("\nWriting results to Excel...")
 
-    # Reorder to match template column order
-    grid_reordered = np.array([_reorder_to_template(grid_purchase_all[i]) for i in range(n_days)])
-    df_grid = pd.DataFrame(grid_reordered, columns=time_cols)
+    df_grid = pd.DataFrame(grid_purchase_all, columns=time_cols)
     df_grid.insert(0, template.columns[0],
                    [str(dates_load[idx])[:10] for idx in range(start_idx, end_idx + 1)])
     df_grid["全天购电量"] = grid_purchase_all.sum(axis=1)
@@ -231,6 +241,10 @@ if __name__ == "__main__":
     dates_load, load_data = load_historical_load()
     dates_pv, pv_data = load_historical_pv()
 
-    # 使用傅里叶预测方法
-    predictor = FourierPredictor(dates_load, load_data, dates_pv, pv_data)
+    # 傅里叶 + 净负荷滞后项预测 + 新闻童分位安全边际（问题二口径）
+    # （紧急购电价 = 5 倍正常电价，故日前计划量取净负荷的高分位数而非均值）
+    predictor = FourierLagQuantilePredictor(
+        dates_load, load_data, dates_pv, pv_data,
+        lags=(1, 2, 3), quantile=0.75, residual_days=30,
+    )
     run_question4_full_year(predictor)

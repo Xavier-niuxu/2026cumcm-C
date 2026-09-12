@@ -1,5 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Cost module: LP optimization and electricity cost calculation."""
+"""Cost module: LP optimization and electricity cost calculation.
+
+Question 4 keeps the two-stage structure of Question 2 (day-ahead planning
+against a forecast, then real-time settlement) but the price is no longer
+constant: every day has its own 附件4 price curve, and the price is itself
+uncertain at planning time.  The model therefore splits the price into two
+roles, as requested:
+
+* ``planning_price``  : the *forecast* price known when the day-ahead LP is
+  solved.  It only shapes the objective, i.e. when to buy / store energy.
+* ``settlement_price``: the *actual* price used to bill the energy that is
+  really drawn.  Both the normal bill and the emergency bill (5x) are settled
+  on this curve.
+
+When ``settlement_price`` is not given it falls back to ``planning_price``,
+which reduces the module to the Question 2 behaviour.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +65,7 @@ def solve_lp_day_ahead(
     s_min: float = S_MIN,
     s_max: float = S_MAX,
     s_init: float = S_INIT,
+    s_end_min: float | None = None,
     p_max: float = P_MAX,
     eps: float = EPS,
 ) -> dict:
@@ -69,7 +86,12 @@ def solve_lp_day_ahead(
         Bounds: 0 <= g_t
                 0 <= c_t, d_t <= P_MAX*dt
                 S_min <= S_t <= S_max
-                S_1 = S_{n+1} = s_init
+                S_1 = s_init
+    
+    The terminal SOC S_{n+1} is free by default: the objective has no value on
+    stored energy, so the LP empties the battery down to ``s_min`` by the end of
+    the day.  Passing ``s_end_min`` imposes S_{n+1} >= s_end_min, which keeps a
+    real-time reserve for the next day's forecast errors.
     
     Returns:
         dict with keys: grid, charge, discharge, soc
@@ -128,11 +150,14 @@ def solve_lp_day_ahead(
         bub[t] = -net_load[t]
     
     # Bounds
+    soc_upper = [(s_min, s_max)] * (n + 1)
+    if s_end_min is not None:
+        soc_upper[n] = (max(s_min, s_end_min), s_max)
     bounds = (
         [(0.0, None)] * n                           # g >= 0
         + [(0.0, p_max * delta_t)] * n              # 0 <= c <= P_MAX*dt
         + [(0.0, p_max * delta_t)] * n              # 0 <= d <= P_MAX*dt
-        + [(s_min, s_max)] * (n + 1)                # S_min <= S <= S_max
+        + soc_upper                                 # S_min <= S <= S_max
     )
     
     res = linprog(
@@ -206,58 +231,196 @@ def calculate_emergency_purchase(
     return emergency_purchase, emergency_cost
 
 
-def calculate_cost(
+def execute_real_time_dispatch(
     price: np.ndarray,
+    load_actual: np.ndarray,
+    pv_actual: np.ndarray,
+    grid_planned: np.ndarray,
+    *,
+    delta_t: float = DELTA_T,
+    eta: float = ETA,
+    s_min: float = S_MIN,
+    s_max: float = S_MAX,
+    s_init: float = S_INIT,
+    p_max: float = P_MAX,
+    emergency_price_multiplier: float = EMERGENCY_PRICE_MULTIPLIER,
+) -> dict:
+    """Real-time battery dispatch against the committed day-ahead purchase.
+
+    The day-ahead plan fixes the grid purchase ``g_t``; the normal purchase
+    bill is settled on that planned quantity, so ``g_t`` cannot be revised in
+    real time.  The battery, however, is operated in real time: it charges
+    from any surplus (planned purchase above the realised net load) and
+    discharges into any shortfall, subject to its power and energy limits.
+    Only the shortfall the battery cannot cover is bought as emergency power
+    at ``emergency_price_multiplier`` times the normal price.
+
+    ``price`` is the settlement price: it is only used to bill the emergency
+    energy, since the dispatch rule itself reacts to the realised energy gap.
+
+    With a perfect forecast this reproduces the planned schedule exactly and
+    incurs no emergency purchase, so it is a strict generalisation of the
+    "actual charge/discharge = planned charge/discharge" settlement.
+
+    Returns:
+        dict with keys: emergency, charge, discharge, soc_start, soc_end,
+        emergency_cost
+    """
+    price = np.asarray(price, dtype=float)
+    load_actual = np.asarray(load_actual, dtype=float)
+    pv_actual = np.asarray(pv_actual, dtype=float)
+    grid_planned = np.asarray(grid_planned, dtype=float)
+
+    n = len(price)
+    net_actual = (load_actual - pv_actual) * delta_t  # kWh needed per interval
+    cap = p_max * delta_t
+
+    emergency = np.zeros(n)
+    charge = np.zeros(n)
+    discharge = np.zeros(n)
+    soc_start = np.empty(n)
+    soc_end = np.empty(n)
+
+    soc = float(s_init)
+    for t in range(n):
+        soc_start[t] = soc
+        surplus = grid_planned[t] - net_actual[t]
+        if surplus >= 0.0:
+            # Excess purchase is stored, not wasted (up to power/SOC headroom).
+            c = min(surplus, cap, max(0.0, (s_max - soc) / eta))
+            charge[t] = c
+            soc += eta * c
+        else:
+            # Shortfall is covered by the battery first, then emergency power.
+            d = min(-surplus, cap, max(0.0, (soc - s_min) * eta))
+            discharge[t] = d
+            soc -= d / eta
+            emergency[t] = -surplus - d
+        soc_end[t] = soc
+
+    emergency_cost = float(
+        np.sum(price * emergency_price_multiplier * emergency)
+    )
+    return {
+        "emergency": emergency,
+        "charge": charge,
+        "discharge": discharge,
+        "soc_start": soc_start,
+        "soc_end": soc_end,
+        "emergency_cost": emergency_cost,
+    }
+
+
+def calculate_cost(
+    planning_price: np.ndarray,
     load_forecast: np.ndarray,
     pv_forecast: np.ndarray,
     load_actual: np.ndarray = None,
     pv_actual: np.ndarray = None,
+    *,
+    settlement_price: np.ndarray = None,
+    real_time_dispatch: bool = True,
+    s_init: float = S_INIT,
+    s_end_min: float | None = None,
+    s_min_plan: float | None = None,
+    s_max_plan: float | None = None,
 ) -> LPResult:
-    """Calculate optimal purchase strategy and cost.
+    """Calculate optimal purchase strategy and cost under a fluctuating price.
     
-    Two-stage approach per reference paper:
-    1. Day-ahead optimization: optimize normal grid purchase using forecasts
-    2. Emergency purchase calculation: use actual values to compute emergency purchase
-    
-    If load_actual and pv_actual are not provided, assumes perfect forecast (no emergency).
+    Two-stage approach (Question 2 method, Question 4 price):
+    1. Day-ahead optimization: plan the normal grid purchase on the *forecast*
+       net load and the *forecast* price.
+    2. Real-time stage: bill the planned quantity at the *actual* price, flex
+       the battery against the realised net load, and buy the residual
+       shortfall as emergency power at 5x the actual price.
+
+    If load_actual and pv_actual are not provided, assumes perfect forecast
+    (no emergency) and reports the planned battery schedule.
     
     Args:
-        price: electricity price at each time slot
+        planning_price: forecast electricity price per slot, used by the
+            day-ahead LP objective only.
         load_forecast: predicted load power (kW)
         pv_forecast: predicted PV power (kW)
         load_actual: actual load power (kW), optional
         pv_actual: actual PV power (kW), optional
+        settlement_price: actual electricity price used for the bill. Defaults
+            to ``planning_price``, which reproduces the Question 2 behaviour.
+        real_time_dispatch: if True (default) the battery flexes in real time to
+            absorb forecast errors; if False the actual charge/discharge is
+            frozen at the planned values (the original conservative model).
+        s_init: SOC at 0:00 of the current day (kWh). Only 2025-01-01 0:00 is
+            fixed at 6000 kWh by the problem statement; for every later day the
+            caller passes the previous day's closing SOC so the battery state is
+            continuous across days.
+        s_min_plan, s_max_plan: planning band for the day-ahead LP only.  The
+            plan is drawn from a band narrower than the physical one
+            ``[S_MIN, S_MAX]``, which reserves battery headroom for the next
+            day's forecast error; the real-time dispatch still respects the
+            physical limits.  The band is widened as needed to contain
+            ``s_init`` so the LP stays feasible.  ``None`` keeps the physical
+            band.
     
     Returns:
-        LPResult with optimization and emergency purchase results
+        LPResult with optimization and emergency purchase results; ``soc_end[-1]``
+        is the SOC at 24:00 and is carried into the next day.
     """
+    planning_price = np.asarray(planning_price, dtype=float)
+    if settlement_price is None:
+        settlement_price = planning_price
+    else:
+        settlement_price = np.asarray(settlement_price, dtype=float)
+
     # Stage 1: Day-ahead optimization
-    plan = solve_lp_day_ahead(price, load_forecast, pv_forecast)
+    # The plan is drawn from a band narrower than [S_MIN, S_MAX], leaving the
+    # battery headroom to absorb the next day's forecast error in real time.
+    plan_lo = S_MIN if s_min_plan is None else min(s_min_plan, s_init)
+    plan_hi = S_MAX if s_max_plan is None else max(s_max_plan, s_init)
+    plan = solve_lp_day_ahead(
+        planning_price, load_forecast, pv_forecast, s_init=s_init,
+        s_end_min=s_end_min, s_min=plan_lo, s_max=plan_hi,
+    )
     
     grid = plan["grid"]
-    charge = plan["charge"]
-    discharge = plan["discharge"]
-    soc = plan["soc"]
+    normal_cost = float(np.dot(settlement_price, grid))
     
-    normal_cost = float(np.dot(price, grid))
-    
-    # Stage 2: Calculate emergency purchase
+    # Stage 2: Real-time settlement
     if load_actual is not None and pv_actual is not None:
-        emergency, emergency_cost = calculate_emergency_purchase(
-            price, load_actual, pv_actual, grid, charge, discharge
-        )
+        if real_time_dispatch:
+            rt = execute_real_time_dispatch(
+                settlement_price, load_actual, pv_actual, grid, s_init=s_init
+            )
+            emergency = rt["emergency"]
+            emergency_cost = rt["emergency_cost"]
+            charge = rt["charge"]
+            discharge = rt["discharge"]
+            soc_start = rt["soc_start"]
+            soc_end = rt["soc_end"]
+        else:
+            emergency, emergency_cost = calculate_emergency_purchase(
+                settlement_price, load_actual, pv_actual, grid,
+                plan["charge"], plan["discharge"],
+            )
+            charge = plan["charge"]
+            discharge = plan["discharge"]
+            soc_start = plan["soc"][:-1].copy()
+            soc_end = plan["soc"][1:].copy()
     else:
         # No actual data provided, assume perfect forecast
-        emergency = np.zeros(len(price))
+        emergency = np.zeros(len(planning_price))
         emergency_cost = 0.0
-    
+        charge = plan["charge"]
+        discharge = plan["discharge"]
+        soc_start = plan["soc"][:-1].copy()
+        soc_end = plan["soc"][1:].copy()
+
     return LPResult(
         grid_purchase=grid,
         emergency_purchase=emergency,
         charge=charge,
         discharge=discharge,
-        soc_start=soc[:-1].copy(),
-        soc_end=soc[1:].copy(),
+        soc_start=soc_start,
+        soc_end=soc_end,
         objective=normal_cost,
         normal_cost=normal_cost,
         emergency_cost=emergency_cost,
