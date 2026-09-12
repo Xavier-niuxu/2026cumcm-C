@@ -1,0 +1,2 @@
+﻿name,updates,strategy,downscale,settlement,continuous,plan_cost,adjustment_cost,emergency_cost,total_cost,emergency_kwh,adjustment_kwh,events,throughput,terminal_soc,violations,runtime_s
+settlement_sensitivity,"(0, 6, 12, 18)",stochastic,linear,sunk_plus_penalty,True,12761149.810889963,621446.4977712742,475841.74094287783,13858438.049604116,84780.78623695875,579845.0513799263,393,11897478.258808013,6801.396023005799,0,564.898248700003

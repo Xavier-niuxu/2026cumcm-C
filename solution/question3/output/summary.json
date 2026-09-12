@@ -1,0 +1,30 @@
+{
+  "winner": {
+    "name": "update_ablation",
+    "updates": "(0, 6, 12, 18)",
+    "strategy": "stochastic",
+    "downscale": "linear",
+    "settlement": "refund50",
+    "continuous": true,
+    "plan_cost": 12763311.83801963,
+    "adjustment_cost": 478363.2115145333,
+    "emergency_cost": 492144.959911557,
+    "total_cost": 13733820.00944572,
+    "emergency_kwh": 87504.65654279506,
+    "adjustment_kwh": 1343583.0851252596,
+    "events": 406.0,
+    "throughput": 12009038.232569402,
+    "terminal_soc": 6804.508718818056,
+    "violations": 0.0,
+    "runtime_s": 305.5576599999986
+  },
+  "ablation": {
+    "(0,)": 14715150.395601204,
+    "(0, 6)": 14141406.389445866,
+    "(0, 6, 12)": 14005841.397498077,
+    "(0, 6, 12, 18)": 13733820.00944572
+  },
+  "V6": 573744.0061553381,
+  "V12": 135564.99194778875,
+  "V18": 272021.38805235736
+}
