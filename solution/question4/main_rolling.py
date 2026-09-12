@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-"""问题 4（问题 3 版本）：波动电价下的滚动随机 MPC + 写出 result4-3.xlsx。
+"""问题 4（问题 3 版本）：波动电价下的承诺型滚动随机优化 + 写出 result4-3.xlsx。
 
-与 ``question3/main.py`` 完全同构（4 节点 SAA 随机规划 + 因果实时储能执行 +
-跨日 SOC 连续），只把电价口径换成附件 4 的**波动电价**：
+与 ``question3/main.py --engine commitment`` 完全同构（0:00/6:00/12:00/18:00
+发布节点的承诺型随机 LP、加权 K-means 日场景、因果实时储能执行、跨日 SOC
+连续、逐次调整结算），只把电价口径换成附件 4 的**波动电价**：
 
-    计划电价 = PriceFourierPredictor 对附件 4 的滚动预测（进入 MPC 目标）
+    计划电价 = PriceFourierPredictor 对附件 4 的滚动预测（进入承诺 LP 目标）
     结算电价 = 附件 4 的实际电价（计划购电费 / 违约金 / 调增费 / 紧急购电费）
 
 用法::
 
     python main_rolling.py                    # 全年 2025-02-01 ~ 12-31
-    python main_rolling.py --scenarios 20     # 更多场景
+    python main_rolling.py --scenarios 12     # 更多场景
     python main_rolling.py --nodes 0,1        # 只用 0:00 与 6:00 的预报
     python main_rolling.py --no-write         # 只跑不写盘
 """
@@ -22,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-# 问题 3 的 rolling/mpc/scenarios/data_loader 之间用裸模块名互相引用，
+# 问题 3 的 commitment/data_loader/scenarios 之间用裸模块名互相引用，
 # 因此把 question3 目录插到 PATH 最前面，保证 ``import data_loader`` 命中
 # 问题 3 的版本（而不是本目录下同名的 question4/data_loader.py）。
 _Q3_DIR = Path(__file__).resolve().parents[1] / "question3"
@@ -31,10 +32,14 @@ sys.path.insert(0, str(_Q3_DIR))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from commitment import (  # noqa: E402
+    CausalFourierLoadModel,
+    causal_load_error_pool,
+    run_day_commitment,
+)
 from data_loader import day_index_of, load_actual, load_pv_forecast  # noqa: E402
 from pred.price_fourier import PriceFourierPredictor  # noqa: E402
-from rolling import run_day  # noqa: E402
-from scenarios import load_error_pool, load_forecast_model, pv_error_pool  # noqa: E402
+from scenarios import pv_error_pool  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRICE_FILE = PROJECT_ROOT / "附件" / "附件4.xlsx"
@@ -66,15 +71,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", default="2025-02-01")
     parser.add_argument("--end", default="2025-12-31")
-    parser.add_argument("--scenarios", type=int, default=12)
+    parser.add_argument("--scenarios", type=int, default=5)
     parser.add_argument("--lookback", type=int, default=90)
     parser.add_argument("--nodes", default="0,1,2,3")
     parser.add_argument("--deterministic", action="store_true")
-    parser.add_argument("--cvar", type=float, default=0.0)
-    parser.add_argument("--cvar-alpha", type=float, default=0.95)
     parser.add_argument("--pv-method", default="linear", choices=["linear", "step"])
-    parser.add_argument("--battery", default="realtime",
-                        choices=["realtime", "committed"])
+    parser.add_argument("--settlement", default="sequential",
+                        choices=["sequential", "final_net"],
+                        help="逐次调整结算（正文口径）或只按最终净调整结算（敏感性）")
+    parser.add_argument("--event-threshold", type=float, default=0.0)
     parser.add_argument("--daily-reset", action="store_true",
                         help="每天 0:00 强制 SOC 回到 6000（默认跨日连续）")
     parser.add_argument("--no-write", action="store_true")
@@ -87,9 +92,9 @@ def main() -> None:
     _, fc = load_pv_forecast()
     dates_price, price_data = load_price_series()
 
-    print("Building load forecast model and error pools ...")
-    model = load_forecast_model(dates, load)
-    load_err = load_error_pool(model, dates, load)
+    print("Building causal load forecast model and error pool ...")
+    model = CausalFourierLoadModel(dates, load)
+    load_err = causal_load_error_pool(model, dates, load)
     pv_err = tuple(pv_error_pool(pv, fc, i, method=args.pv_method) for i in range(4))
 
     print("Building price forecast model (附件4) ...")
@@ -117,7 +122,7 @@ def main() -> None:
         price_pred = price_model.predict(date_str)
         price_actual = price_data[price_row[pd.Timestamp(date_str)]]
 
-        res = run_day(
+        res = run_day_commitment(
             day=day,
             dates=dates,
             load_actual=load,
@@ -131,11 +136,10 @@ def main() -> None:
             lookback=args.lookback,
             nodes=nodes,
             stochastic=not args.deterministic,
-            cvar_weight=args.cvar,
-            cvar_alpha=args.cvar_alpha,
             pv_method=args.pv_method,
-            battery_mode=args.battery,
             s_init=soc_carry,
+            settlement=args.settlement,
+            event_threshold=args.event_threshold,
             settlement_price=price_actual,
         )
         soc_carry = 6000.0 if args.daily_reset else float(res["soc"][-1])
@@ -187,7 +191,7 @@ def main() -> None:
     total_adj = sum(r["adjusted_kwh"] for r in records)
     total_emg = sum(r["emergency_kwh"] for r in records)
     print("\n" + "=" * 74)
-    print(f"Rolling stochastic MPC (波动电价): {len(days)} days in {elapsed / 60:.1f} min")
+    print(f"Commitment rolling MPC (波动电价): {len(days)} days in {elapsed / 60:.1f} min")
     print(f"计划购电量  {total_plan:14,.4f} kWh")
     print(f"最终调整量  {total_adj:14,.4f} kWh")
     print(f"紧急购电量  {total_emg:14,.4f} kWh")

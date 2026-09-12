@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 """Fourier (harmonic) regression predictor for electricity prices.
 
-Design matrix for day index d (12 columns):
+Design matrix for day index d (11 columns):
 
-    x_d = [1, e_0..e_6, sin(2*pi*d/365), cos(2*pi*d/365),
+    x_d = [e_0..e_6, sin(2*pi*d/365), cos(2*pi*d/365),
            sin(4*pi*d/365), cos(4*pi*d/365)]
 
-  * 1                : intercept
   * e_0..e_6         : weekday one-hot (Monday = 0), exactly one is 1
   * sin/cos(2*pi...) : annual harmonic
   * sin/cos(4*pi...) : semi-annual (2nd) harmonic
+
+The intercept column is omitted on purpose: the seven weekday dummies sum to
+1, so a separate intercept would be collinear with them (the design would be
+rank-deficient).  Dropping it leaves the column space unchanged.
 
 One OLS is solved per 10-minute slot t (144 independent regressions that
 share the same design matrix, since the features depend only on the day):
@@ -27,11 +30,11 @@ import pandas as pd
 
 PERIOD = 365.0          # days, annual harmonic
 N_SLOTS = 144           # 10-minute slots per day
-N_FEATURES = 12         # 1 intercept + 7 weekday + 2*2 harmonics
+N_FEATURES = 11         # 7 weekday + 2*2 harmonics (no intercept)
 
 
 def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
-    """Return the (n, 12) Fourier design matrix for the given days.
+    """Return the (n, 11) Fourier design matrix for the given days.
 
     Args:
         day_index: 0-based day index used for the harmonic terms.
@@ -42,12 +45,11 @@ def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
     n = day_index.size
 
     X = np.zeros((n, N_FEATURES), dtype=float)
-    X[:, 0] = 1.0
-    X[np.arange(n), 1 + weekday] = 1.0
-    X[:, 8] = np.sin(2 * np.pi * day_index / PERIOD)
-    X[:, 9] = np.cos(2 * np.pi * day_index / PERIOD)
-    X[:, 10] = np.sin(4 * np.pi * day_index / PERIOD)
-    X[:, 11] = np.cos(4 * np.pi * day_index / PERIOD)
+    X[np.arange(n), weekday] = 1.0
+    X[:, 7] = np.sin(2 * np.pi * day_index / PERIOD)
+    X[:, 8] = np.cos(2 * np.pi * day_index / PERIOD)
+    X[:, 9] = np.sin(4 * np.pi * day_index / PERIOD)
+    X[:, 10] = np.cos(4 * np.pi * day_index / PERIOD)
     return X
 
 
@@ -104,7 +106,7 @@ class PriceFourierPredictor:
             raise ValueError(f"Cannot predict {target_date}: no history available")
 
         if train.size < self.n_min_days:
-            # Too little data to identify 12 coefficients: use the plain mean.
+            # Too little data to identify 11 coefficients: use the plain mean.
             pred = self.price_data[train].mean(axis=0)
             return np.asarray(pred, dtype=float)
 
@@ -115,7 +117,7 @@ class PriceFourierPredictor:
         return np.asarray(pred, dtype=float)
 
     def _fit(self, rows: np.ndarray) -> np.ndarray:
-        """OLS for all 144 slots at once -> (12, 144) coefficient matrix."""
+        """OLS for all 144 slots at once -> (11, 144) coefficient matrix."""
         X = build_design(rows, self._weekday[rows])
         Y = self.price_data[rows]
         if X.shape[0] < X.shape[1]:  # rank-deficient: minimum-norm solution

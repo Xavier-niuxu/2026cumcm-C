@@ -44,9 +44,12 @@ P_MAX_SLOT = P_MAX * DELTA_T
 
 
 def _calendar(day: int) -> np.ndarray:
-    """与 Q2 傅里叶回归等价的日历特征（含冗余截距以复现暖启动）。"""
+    """与 Q2 傅里叶回归等价的日历特征。
+
+    7 个星期独热哑变量之和恒为 1，若再加截距列会与之共线（设计矩阵秩亏），
+    故这里不设截距；删去后列空间不变，预测值不受影响。
+    """
     return np.r_[
-        1.0,
         np.eye(7)[day % 7],
         np.sin(2 * np.pi * day / 365.0),
         np.cos(2 * np.pi * day / 365.0),
@@ -253,14 +256,23 @@ def run_day_commitment(
     stochastic: bool = True, pv_method: str = "linear",
     s_init: float = S_INIT, event_threshold: float = 0.0,
     settlement: str = "sequential",
+    settlement_price: np.ndarray | None = None,
     **_ignored,
 ) -> dict:
-    """完成一天的滚动决策、因果执行和真实结算。"""
+    """完成一天的滚动决策、因果执行和真实结算。
+
+    ``settlement_price``：结算电价（144,）。``price`` 始终是**计划电价**，
+    进入承诺 LP 目标与"保留原计划"的风险比较；给出 ``settlement_price`` 时，
+    计划购电费、调减违约金、调增购电费与紧急购电费全部按该实际电价结算。
+    ``None`` 时退回问题 3 的固定电价口径（结算价 = 计划价）。
+    """
     nodes = tuple(sorted(set(nodes)))
     if not nodes or nodes[0] != 0:
         raise ValueError("node 0 (0:00) must always be included")
     if settlement not in {"sequential", "final_net"}:
         raise ValueError("settlement must be 'sequential' or 'final_net'")
+
+    settle = price if settlement_price is None else np.asarray(settlement_price)
 
     actual_net_kw = load_actual[day] - pv_actual[day]
     plan = None
@@ -316,8 +328,8 @@ def run_day_commitment(
             accepted = (keep_cost - objective) > event_threshold
             if accepted:
                 current[start:] = q
-                increase_cost += float(np.dot(PLAN_INCREASE_RATE * price[start:], up))
-                reduce_cost -= float(np.dot(PLAN_REDUCE_REFUND * price[start:], down))
+                increase_cost += float(np.dot(PLAN_INCREASE_RATE * settle[start:], up))
+                reduce_cost -= float(np.dot(PLAN_REDUCE_REFUND * settle[start:], down))
                 adjustment_kwh += float(up.sum() + down.sum())
 
         adjusted[start:end] = current[start:end]
@@ -336,14 +348,14 @@ def run_day_commitment(
             "purchase_remaining": current[start:].copy(),
         })
 
-    planned_cost = float(np.dot(price, plan))
-    emergency_cost = float(np.dot(price, EMERGENCY_MULTIPLIER * emergency))
+    planned_cost = float(np.dot(settle, plan))
+    emergency_cost = float(np.dot(settle, EMERGENCY_MULTIPLIER * emergency))
 
     final_reduce = -float(
-        np.dot(price, PLAN_REDUCE_REFUND * np.maximum(plan - adjusted, 0.0))
+        np.dot(settle, PLAN_REDUCE_REFUND * np.maximum(plan - adjusted, 0.0))
     )
     final_increase = float(
-        np.dot(price, PLAN_INCREASE_RATE * np.maximum(adjusted - plan, 0.0))
+        np.dot(settle, PLAN_INCREASE_RATE * np.maximum(adjusted - plan, 0.0))
     )
     sequential_total = planned_cost + reduce_cost + increase_cost + emergency_cost
     final_net_total = planned_cost + final_reduce + final_increase + emergency_cost

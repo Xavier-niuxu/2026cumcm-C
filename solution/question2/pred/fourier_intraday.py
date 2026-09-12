@@ -5,7 +5,7 @@ Extends the base FourierPredictor by adding sin/cos terms for the within-day
 cycle (period = 144 slots = 24 hours).
 
 Feature vector x(d, t):
-  - Day-level (N_DAY_FEATURES = 12): intercept, e_0..e_6,
+  - Day-level (N_DAY_FEATURES = 11): e_0..e_6,
                     sin(2pi*d/365), cos(2pi*d/365),
                     sin(4pi*d/365), cos(4pi*d/365)
   - Intraday (2*K): sin(2*pi*k*t/144), cos(2*pi*k*t/144) for k=1..K
