@@ -33,6 +33,7 @@ from data_loader import (  # noqa: E402
 )
 from prediction import (  # noqa: E402
     FourierPredictor,
+    FourierIntradayPredictor,
     FourierQuantilePredictor,
     LastWeekPredictor,
     LinearFitPredictor,
@@ -116,6 +117,9 @@ def build_predictors(dates_load, load_data, dates_pv, pv_data):
         "WeightedAverage 4:3:2:1": base(WeightedAveragePredictor),
         "LinearFit (4 same weekdays)": base(LinearFitPredictor),
         "Fourier (12 features)": base(FourierPredictor),
+        "Fourier+Intraday (K=6)": FourierIntradayPredictor(
+            dates_load, load_data, dates_pv, pv_data, n_intraday=6
+        ),
     }
 
 

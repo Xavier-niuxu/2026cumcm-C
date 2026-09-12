@@ -1,0 +1,308 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage{ctex}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+\usepackage{hyperref}
+
+\title{C题 --- 微电网购电优化问题}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\section{问题二：考虑预测误差的购电优化模型}
+% ============================================================
+
+\subsection{问题分析}
+
+问题二要求在第一问的基础上，考虑实际场景中负载和光伏出力存在预测误差的情况。
+由于日前购电计划需要提前一天制定，而实际负载和光伏发电功率在计划执行时可能与预测值存在偏差。
+当实际净负荷超过计划购电量与储能调度量之和时，必须通过紧急购电来弥补缺口，
+而紧急购电的电价为正常电价的5倍，这将显著增加总购电成本。
+
+因此，本问的核心在于：
+\begin{enumerate}
+    \item 如何准确预测未来一天的负载和光伏发电功率；
+    \item 在预测值的基础上，如何制定日前最优购电计划；
+    \item 如何量化预测误差导致的紧急购电量及其成本。
+\end{enumerate}
+
+\subsection{模型假设}
+
+\begin{itemize}
+    \item 日前购电计划基于预测的负载和光伏功率制定；
+    \item 紧急购电仅在预测值不足以满足实际负荷需求时发生；
+    \item 紧急购电电价为正常电价的5倍；
+    \item 紧急购电不经过储能系统，直接弥补能量缺口；
+    \item 储能系统的充放电效率、容量等参数与第一问相同。
+\end{itemize}
+
+\subsection{模型建立}
+
+\subsubsection{两阶段优化框架}
+
+本问题采用两阶段优化模型：
+
+\textbf{第一阶段：日前优化（Day-ahead Optimization）}
+
+基于预测的负载功率 $\hat{L}_t$ 和光伏功率 $\hat{P}_t$，制定次日的购电计划。
+优化目标为最小化正常购电成本：
+
+\begin{equation}
+    \min_{g_t, c_t, d_t} \sum_{t=1}^{T} \left(p_t \cdot g_t + \varepsilon \cdot (c_t + d_t)\right)
+\end{equation}
+
+其中 $T = 144$ 为每天的时段数（每10分钟一个时段），$p_t$ 为时段 $t$ 的电价（元/kWh），
+$g_t$、$c_t$、$d_t$ 分别为时段 $t$ 的购电量、充电量和放电量（单位均为 kWh），
+$\varepsilon = 10^{-7}$ 为极小的退化惩罚系数，用于避免求解器同时分配充电和放电量。
+
+\textbf{约束条件：}
+
+\textbf{(1) 能量平衡约束：}
+\begin{equation}
+    g_t + \hat{P}_t \cdot \Delta t + d_t \geq \hat{L}_t \cdot \Delta t + c_t, \quad \forall t
+\end{equation}
+
+\textbf{(2) SOC动态约束：}
+\begin{equation}
+    S_{t+1} = S_t + \eta \cdot c_t - \frac{d_t}{\eta}, \quad \forall t
+\end{equation}
+其中 $\eta = 0.90$ 为储能系统充放电效率。
+
+\textbf{(3) 初始SOC约束：}
+\begin{equation}
+    S_1 = S_{\text{init}} = 6000 \text{ kWh}
+\end{equation}
+
+\textbf{(4) 变量边界约束：}
+\begin{equation}
+    \begin{cases}
+        0 \leq g_t & \text{（购电非负）} \\
+        0 \leq c_t \leq P_{\max} \cdot \Delta t & \text{（充电能量上限）} \\
+        0 \leq d_t \leq P_{\max} \cdot \Delta t & \text{（放电能量上限）} \\
+        S_{\min} \leq S_t \leq S_{\max} & \text{（SOC安全范围）}
+    \end{cases}
+\end{equation}
+其中 $P_{\max} = 5000$ kW，$S_{\min} = 1200$ kWh，$S_{\max} = 10800$ kWh。
+
+\textbf{第二阶段：紧急购电计算（Emergency Purchase Calculation）}
+
+在日前计划 $(g_t^*, c_t^*, d_t^*)$ 确定后，实际执行时充放电量保持计划值不变（$c_t^{\text{actual}} = c_t^*$, $d_t^{\text{actual}} = d_t^*$），仅购电量可根据实际情况调整。当实际净负荷需求超过计划购电量与储能调度量之和时，需要通过紧急购电弥补缺口：
+
+\begin{equation}
+    e_t = \max\left(0,\; (L_t - P_t) \cdot \Delta t + c_t^* - d_t^* - g_t^*\right)
+\end{equation}
+
+紧急购电成本为：
+\begin{equation}
+    C_{\text{emergency}} = \sum_{t=1}^{T} 5 \cdot p_t \cdot e_t
+\end{equation}
+
+总购电成本为：
+\begin{equation}
+    C_{\text{total}} = \underbrace{\sum_{t=1}^{T} p_t \cdot g_t^*}_{\text{正常购电成本}} + \underbrace{\sum_{t=1}^{T} 5 \cdot p_t \cdot e_t}_{\text{紧急购电成本}}
+\end{equation}
+
+\subsubsection{基线预测方法}
+
+为验证傅里叶谐波回归方法的优越性，本文同时实现了三种基线预测方法作为对比。
+
+\textbf{方法一：上周同日预测法（LastWeek）}
+
+直接使用7天前（上周同一天）的实际数据作为预测值：
+
+\begin{equation}
+    \hat{L}_{d^*,t} = L_{d^*-7,t}, \quad \hat{P}_{d^*,t} = P_{d^*-7,t}
+\end{equation}
+
+其中 $d^*$ 为目标日，$t$ 为时段索引。该方法假设一周内的用电模式具有周期性，
+简单直接但无法捕获长期趋势变化。
+
+\textbf{方法二：前4周同星期加权平均法（WeightedAverage）}
+
+取过去4周同一星期几的数据，按时间远近赋予不同权重进行加权平均：
+
+\begin{equation}
+    \hat{L}_{d^*,t} = \frac{\sum_{k=1}^{4} w_k \cdot L_{d_k,t}}{\sum_{k=1}^{4} w_k}, \quad
+    \hat{P}_{d^*,t} = \frac{\sum_{k=1}^{4} w_k \cdot P_{d_k,t}}{\sum_{k=1}^{4} w_k}
+\end{equation}
+
+其中 $d_1, d_2, d_3, d_4$ 分别为距目标日最近的4个同星期几的历史日（从近到远），
+权重 $w_1=4, w_2=3, w_3=2, w_4=1$，即越近的数据权重越大。
+该方法通过加权平滑降低了单一样本的随机波动，但仍局限于同一星期几的数据。
+
+\textbf{方法三：前4周同星期线性拟合法（LinearFit）}
+
+对过去4周同一星期几的数据，在每个时段 $t$ 上分别拟合线性趋势并外推：
+
+\begin{equation}
+    \hat{L}_{d^*,t} = a_{L,t} \cdot x^* + b_{L,t}, \quad
+    \hat{P}_{d^*,t} = a_{P,t} \cdot x^* + b_{P,t}
+\end{equation}
+
+其中 $x = 1, 2, 3, 4$ 表示4个历史同星期日的序号（从远到近），$x^* = 5$ 为目标日序号。
+回归系数由最小二乘法求得：
+
+\begin{equation}
+    a_{L,t} = \frac{\sum_{i=1}^{4}(x_i - \bar{x})(L_{d_i,t} - \bar{L}_t)}{\sum_{i=1}^{4}(x_i - \bar{x})^2}, \quad
+    b_{L,t} = \bar{L}_t - a_{L,t} \cdot \bar{x}
+\end{equation}
+
+其中 $\bar{x} = 2.5$，$\bar{L}_t = \frac{1}{4}\sum_{i=1}^{4} L_{d_i,t}$。
+该方法能捕获短期线性趋势，但对非线性变化的适应性有限。
+
+\subsubsection{傅里叶谐波回归预测模型}
+
+本文提出基于傅里叶谐波回归的预测方法，综合利用星期效应和季节性趋势。
+
+\textbf{目标变量：}
+
+定义净负荷 $N_t = L_t - P_t$，日前优化仅依赖净负荷的预测值，因此直接对净负荷进行预测。
+
+\textbf{特征设计：}
+
+对于第 $d$ 天，构建12维特征向量 $\mathbf{x}_d$：
+
+\begin{equation}
+    \mathbf{x}_d = \left[1,\; e_0, e_1, \ldots, e_6,\; \sin\frac{2\pi d}{365},\; \cos\frac{2\pi d}{365},\; \sin\frac{4\pi d}{365},\; \cos\frac{4\pi d}{365}\right]^T
+\end{equation}
+
+各特征含义如下：
+\begin{itemize}
+    \item $1$：截距项；
+    \item $e_0, \ldots, e_6$：星期独热编码（$e_0$=周一，\ldots，$e_6$=周日），恰好有一个为1；
+    \item $\sin(2\pi d/365), \cos(2\pi d/365)$：年度谐波，捕获季节性变化；
+    \item $\sin(4\pi d/365), \cos(4\pi d/365)$：半年谐波，捕获更精细的季节性波动。
+\end{itemize}
+
+\textbf{分时段独立回归：}
+
+一天包含 $T = 144$ 个10分钟时段。对每个时段 $t$，使用所有历史天数据独立进行最小二乘回归：
+
+\begin{equation}
+    \boldsymbol{\beta}_t = \arg\min_{\boldsymbol{\beta}} \sum_{d \in \mathcal{D}} \left(\mathbf{x}_d^T \boldsymbol{\beta} - N_{d,t}\right)^2
+\end{equation}
+
+其中 $\mathcal{D}$ 为目标日之前的所有历史天，$N_{d,t}$ 为第 $d$ 天时段 $t$ 的实际净负荷。
+
+由于所有时段共享相同的设计矩阵 $\mathbf{X}$（特征仅依赖天，不依赖时段），
+144个回归可通过一次矩阵运算同时求解：
+
+\begin{equation}
+    \mathbf{B} = (\mathbf{X}^T \mathbf{X})^{-1} \mathbf{X}^T \mathbf{Y}
+\end{equation}
+
+其中 $\mathbf{X} \in \mathbb{R}^{|\mathcal{D}| \times 12}$，$\mathbf{Y} \in \mathbb{R}^{|\mathcal{D}| \times 144}$，
+$\mathbf{B} \in \mathbb{R}^{12 \times 144}$ 为系数矩阵。
+
+\textbf{预测：}
+
+目标日 $d^*$ 的净负荷预测值为：
+
+\begin{equation}
+    \hat{N}_{d^*,t} = \mathbf{x}_{d^*}^T \boldsymbol{\beta}_t, \quad t = 0, 1, \ldots, 143
+\end{equation}
+
+\textbf{该方法的优势在于：}
+\begin{itemize}
+    \item 星期独热编码直接区分工作日与周末的用电模式差异；
+    \item 年度和半年谐波捕获季节性趋势（如夏季空调负荷增加）；
+    \item 144个时段独立回归，每个时段有独立的系数，天然能描述日内变化形态；
+    \item 仅使用目标日之前的数据，无前瞻偏差。
+\end{itemize}
+
+\subsection{模型求解}
+
+\subsubsection{求解算法}
+
+\textbf{第一阶段（日前优化）：} 采用线性规划（LP）求解，使用SciPy的HiGHS求解器。
+决策变量共 $4T + 1 = 577$ 个（$g_t, c_t, d_t$ 各144个，$S_t$ 共145个），
+约束条件包括144条能量平衡不等式和145条SOC相关等式（144条动态等式加1条初始SOC等式）。
+
+\textbf{第二阶段（紧急购电）：} 将日前优化结果代入实际数据，直接计算每个时段的能量缺口，
+无需额外优化。
+
+\subsubsection{求解流程}
+
+\begin{enumerate}
+    \item 加载2024年全年历史数据（365天 $\times$ 144时段）；
+    \item 对2025年2月1日至12月31日共334天，逐日进行滚动预测和优化：
+    \begin{enumerate}
+        \item 使用目标日之前的所有历史数据训练傅里叶预测模型；
+        \item 预测目标日的净负荷曲线 $\hat{N}_t$；
+        \item 求解日前线性规划，得到计划购电量 $g_t^*$、充放电量 $c_t^*, d_t^*$；
+        \item 根据实际净负荷 $N_t$ 计算紧急购电量 $e_t$；
+        \item 累计正常购电成本和紧急购电成本。
+    \end{enumerate}
+    \item 汇总全年结果。
+\end{enumerate}
+
+\subsection{模型结果}
+
+\subsubsection{预测精度分析}
+
+将傅里叶预测方法与其他三种方法进行对比，各方法的预测精度（MAE）如下表所示：
+
+\begin{table}[htbp]
+\centering
+\caption{不同预测方法的MAE对比}
+\begin{tabular}{lcc}
+\toprule
+\textbf{预测方法} & \textbf{MAE (kW)} & \textbf{特征数} \\
+\midrule
+上周同日（LastWeek）       & 327.77 & --- \\
+前4周加权平均（4:3:2:1）   & 337.19 & --- \\
+前4周线性拟合             & 381.21 & --- \\
+\textbf{傅里叶谐波回归}    & \textbf{266.62} & 12 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+傅里叶谐波回归方法的MAE最低，为266.62 kW，相比次优的上周同日方法降低了18.7\%。
+
+\subsubsection{购电成本分析}
+
+各预测方法对应的全年购电成本如下表所示：
+
+\begin{table}[htbp]
+\centering
+\caption{不同预测方法的购电成本对比}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{预测方法} & \textbf{计划购电量} & \textbf{紧急购电量} & \textbf{总费用} & \textbf{紧急占比} \\
+                  & \textbf{(万kWh)}    & \textbf{(万kWh)}    & \textbf{(万元)} & \textbf{(\%)}    \\
+\midrule
+上周同日           & 1841.50 & 120.59 & 1619.72 & 29.1\% \\
+前4周加权平均      & 1839.20 & 125.44 & 1639.98 & 30.1\% \\
+前4周线性拟合      & 1845.11 & 138.55 & 1694.31 & 31.9\% \\
+\textbf{傅里叶谐波回归} & \textbf{1847.63} & \textbf{95.81} & \textbf{1528.90} & \textbf{24.5\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+傅里叶谐波回归方法的总费用最低，为1528.90万元，相比次优的上周同日方法节省约90.82万元。
+其紧急购电占比也最低（24.5\%），说明更准确的预测有效减少了紧急购电的发生。
+
+\subsection{模型评价}
+
+\subsubsection{优点}
+\begin{itemize}
+    \item 两阶段优化框架清晰分离了预测不确定性和优化决策，便于分析和改进；
+    \item 傅里叶谐波回归方法充分利用了数据的周期性和季节性特征，预测精度最高；
+    \item 线性规划求解高效可靠，334天的全年优化可在数秒内完成；
+    \item 紧急购电机制保证了供电可靠性，即使预测存在偏差也能满足负荷需求。
+\end{itemize}
+
+\subsubsection{缺点}
+\begin{itemize}
+    \item 紧急购电成本高昂（5倍电价），对预测误差非常敏感；
+    \item 傅里叶模型假设净负荷的日内形态可由天级别特征线性描述，
+          对于极端天气等异常情况的预测能力有限；
+    \item 未考虑储能系统的老化成本和循环寿命约束。
+\end{itemize}
+
+\end{document}
