@@ -117,3 +117,9 @@ class LinearFitPredictor(BasePredictor):
             load_pred[t] = max(0, a_load * x_target + b_load)
             pv_pred[t] = max(0, a_pv * x_target + b_pv)
         return load_pred, pv_pred
+
+
+# FourierPredictor lives in the pred/ package (pred/fourier.py); re-export it
+# here so `from prediction import FourierPredictor` keeps working, since
+# main.py imports the flat module rather than the package.
+from pred.fourier import FourierPredictor, FourierQuantilePredictor  # noqa: E402,F401
