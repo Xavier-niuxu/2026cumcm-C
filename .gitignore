@@ -7,3 +7,9 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 问题 3 求解产生的中间张量（可由脚本重建，不入库）
+solution/question3/output/*.npz
+
+# 下载/交付用的压缩包（不入库）
+*.zip

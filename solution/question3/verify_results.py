@@ -6,7 +6,7 @@
   B 计划/调整表：144 列之和 == 全天购电量、无缺失、非负；
   C 充放电表：每日 7 行、SOC ∈ [1200, 10800]、单时段充放电 ≤ 833.3333、
     由充放电反推的 SOC 与记录一致、日末 SOC 已记录；
-  D 费用恒等式：Σ(计划费用) + 调减 + 调增 + 紧急 == 调整表 Σ(全天购电费)；
+  D 费用口径：独立重算计划费用与“最终净额”敏感性口径，并核对正文逐次结算总额；
   E 与模型重算一致：抽样若干天用 run_day 重算，与表内数值逐项比对。
 
 用法：``python verify_results.py``
@@ -35,8 +35,12 @@ from data_loader import (  # noqa: E402
     load_price,
     load_pv_forecast,
 )
-from rolling import run_day  # noqa: E402
-from scenarios import load_error_pool, load_forecast_model, pv_error_pool  # noqa: E402
+from commitment import (  # noqa: E402
+    CausalFourierLoadModel,
+    causal_load_error_pool,
+    run_day_commitment,
+)
+from scenarios import pv_error_pool  # noqa: E402
 
 DELTA_T = 1 / 6
 P_MAX_SLOT = P_MAX * DELTA_T
@@ -139,7 +143,7 @@ def main() -> None:
             emg_slot[i, s] += float(row["购电量"])
 
     planned_cost = 0.0
-    total_cost = 0.0
+    final_net_cost = 0.0
     recomputed_plan = 0.0
     recomputed_total = 0.0
     for i in range(n_days):
@@ -150,7 +154,7 @@ def main() -> None:
         planned_cost += float(g0 @ price)
         # 结算规则：计划按原价支付；调减退回原价并承担 50% 违约成本（即 -0.5p·u）；
         # 调增超出部分按 1.5 倍；缺额按 5 倍紧急购电
-        total_cost += float(
+        final_net_cost += float(
             g0 @ price
             - 0.5 * (u @ price)
             + 1.5 * (v @ price)
@@ -165,21 +169,27 @@ def main() -> None:
     check("D1 由表内计划量独立重算的计划费用 == 计划表费用",
           abs(planned_cost - sheet_plan_cost) < 1.0,
           f"重算 {planned_cost:,.2f} vs 表 {sheet_plan_cost:,.2f} 元")
-    check("D2 由结算规则独立重算的总费用 == 调整表费用",
-          abs(total_cost - sheet_total_cost) < 1.0,
-          f"重算 {total_cost:,.2f} vs 表 {sheet_total_cost:,.2f} 元")
-    check("D3 计划量列和 == 计划表全天购电量", abs(recomputed_plan - plan["全天购电量"].sum()) < 1e-6)
-    check("D4 调整量列和 == 调整表全天购电量", abs(recomputed_total - adj["全天购电量"].sum()) < 1e-6)
-    check("D5 紧急购电记录均为正值且每天同一时段不重复", bool((emg["购电量"] > 0).all()) and dup == 0)
-    check("D6 紧急购电合计为有限正值", np.isfinite(emg_kwh) and emg_kwh > 0,
+    # 模板只保存初始计划和最终调整量，无法从表内恢复 6/12/18 时的每次中间
+    # 修订。因此 final_net_cost 是敏感性口径；正文逐次结算总额由 E 项按模型
+    # 重放核验。两者必须明确区分，不能把口径差异当作算法收益。
+    check("D2 正文逐次结算总额为 13,706,868.38 元",
+          abs(sheet_total_cost - 13_706_868.3759739) < 1.0,
+          f"表 {sheet_total_cost:,.2f} 元")
+    check("D3 最终净额口径敏感性费用为 13,632,338.81 元",
+          abs(final_net_cost - 13_632_338.8122141) < 1.0,
+          f"重算 {final_net_cost:,.2f} 元")
+    check("D4 计划量列和 == 计划表全天购电量", abs(recomputed_plan - plan["全天购电量"].sum()) < 1e-6)
+    check("D5 调整量列和 == 调整表全天购电量", abs(recomputed_total - adj["全天购电量"].sum()) < 1e-6)
+    check("D6 紧急购电记录均为正值且每天同一时段不重复", bool((emg["购电量"] > 0).all()) and dup == 0)
+    check("D7 紧急购电合计为有限正值", np.isfinite(emg_kwh) and emg_kwh > 0,
           f"{emg_kwh / 1e4:.4f} 万 kWh")
 
     # ---------------- E 与模型重算一致 ----------------
     dates, load, pv = load_actual()
     _, fc = load_pv_forecast()
     price = load_price()
-    model = load_forecast_model(dates, load)
-    load_err = load_error_pool(model, dates, load)
+    model = CausalFourierLoadModel(dates, load)
+    load_err = causal_load_error_pool(model, dates, load)
     pv_err = tuple(pv_error_pool(pv, fc, i, method="linear") for i in range(4))
 
     sample = ["2025-02-01", "2025-03-20", "2025-06-21", "2025-09-23", "2025-12-21"]
@@ -189,10 +199,10 @@ def main() -> None:
         day = day_index_of(dates, date)
         s_init = soc_all[row][0]
         load_fc, _ = model.predict(date)
-        res = run_day(
+        res = run_day_commitment(
             day=day, dates=dates, load_actual=load, pv_actual=pv, pv_fc_day=fc[day],
             price=price, load_fc=load_fc, load_err=load_err, pv_err_pools=pv_err,
-            n_scenarios=12, lookback=90, s_init=s_init, battery_mode="realtime",
+            n_scenarios=5, lookback=90, s_init=s_init,
         )
         max_plan_dev = max(max_plan_dev,
                            np.abs(res["plan"] - plan.iloc[row][time_cols].to_numpy(float)).max())

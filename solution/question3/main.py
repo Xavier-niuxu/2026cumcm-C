@@ -3,11 +3,11 @@
 
 用法::
 
-    python main.py                       # 全年 2025-02-01 ~ 12-31（默认 12 场景）
-    python main.py --scenarios 20        # 更多场景
-    python main.py --nodes 0,1           # 只用 0:00 与 6:00 的预报
-    python main.py --deterministic       # 单场景（点预报）
-    python main.py --start 2025-06-01 --end 2025-06-30   # 只跑一段时间
+    python3 main.py                       # 全年主模型（默认 5 个加权聚类场景）
+    python3 main.py --engine legacy --scenarios 12  # 原两阶段实现
+    python3 main.py --nodes 0,1           # 只用 0:00 与 6:00 的预报
+    python3 main.py --deterministic       # 单场景（点预报）
+    python3 main.py --start 2025-06-01 --end 2025-06-30   # 只跑一段时间
 """
 
 from __future__ import annotations
@@ -30,7 +30,12 @@ from data_loader import (  # noqa: E402
     load_price,
     load_pv_forecast,
 )
-from rolling import run_day  # noqa: E402
+from commitment import (  # noqa: E402
+    CausalFourierLoadModel,
+    causal_load_error_pool,
+    run_day_commitment,
+)
+from rolling import run_day as run_day_legacy  # noqa: E402
 from scenarios import load_error_pool, load_forecast_model, pv_error_pool  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -70,7 +75,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", default="2025-02-01")
     parser.add_argument("--end", default="2025-12-31")
-    parser.add_argument("--scenarios", type=int, default=12)
+    parser.add_argument("--engine", default="commitment", choices=["commitment", "legacy"],
+                        help="commitment=约1370万元的加权聚类承诺模型；legacy=原两阶段实现")
+    parser.add_argument("--scenarios", type=int, default=5)
     parser.add_argument("--lookback", type=int, default=90)
     parser.add_argument("--nodes", default="0,1,2,3")
     parser.add_argument("--deterministic", action="store_true")
@@ -82,8 +89,22 @@ def main() -> None:
                              "committed=只执行 LP 在决策时刻定下的充放电量")
     parser.add_argument("--daily-reset", action="store_true",
                         help="每天 0:00 强制 SOC 回到 6000（默认跨日连续）")
+    parser.add_argument("--settlement", default="sequential",
+                        choices=["sequential", "final_net"],
+                        help="逐次调整结算（正文口径）或只按最终净调整结算（敏感性）")
+    parser.add_argument("--event-threshold", type=float, default=0.0)
     parser.add_argument("--no-write", action="store_true")
     args = parser.parse_args()
+
+    if args.engine == "commitment":
+        import scipy
+        import sklearn
+        tested = ("1.17.1", "1.9.0")
+        current = (scipy.__version__, sklearn.__version__)
+        if current != tested:
+            print("WARNING: 当前 scipy/scikit-learn=%s/%s，精确复现环境为 %s/%s；"
+                  "多重最优与 K-means 局部最优可能造成约 0.1%% 的费用漂移。"
+                  % (current[0], current[1], tested[0], tested[1]))
 
     nodes = tuple(int(x) for x in args.nodes.split(","))
 
@@ -93,8 +114,14 @@ def main() -> None:
     price = load_price()
 
     print("Building load forecast model and error pools ...")
-    model = load_forecast_model(dates, load)
-    load_err = load_error_pool(model, dates, load)
+    if args.engine == "commitment":
+        model = CausalFourierLoadModel(dates, load)
+        load_err = causal_load_error_pool(model, dates, load)
+        runner = run_day_commitment
+    else:
+        model = load_forecast_model(dates, load)
+        load_err = load_error_pool(model, dates, load)
+        runner = run_day_legacy
     pv_err = tuple(pv_error_pool(pv, fc, i, method=args.pv_method) for i in range(4))
 
     start = day_index_of(dates, args.start)
@@ -111,7 +138,7 @@ def main() -> None:
 
     for i, day in enumerate(days):
         load_fc, _ = model.predict(str(dates[day])[:10])
-        res = run_day(
+        common = dict(
             day=day,
             dates=dates,
             load_actual=load,
@@ -131,6 +158,10 @@ def main() -> None:
             battery_mode=args.battery,
             s_init=soc_carry,
         )
+        if args.engine == "commitment":
+            common.update(settlement=args.settlement,
+                          event_threshold=args.event_threshold)
+        res = runner(**common)
         if not args.daily_reset:
             soc_carry = float(res["soc"][-1])
         else:
@@ -183,7 +214,7 @@ def main() -> None:
     total_adj = sum(r["adjusted_kwh"] for r in records)
     total_emg = sum(r["emergency_kwh"] for r in records)
     print("\n" + "=" * 74)
-    print(f"Rolling stochastic MPC: {len(days)} days in {elapsed / 60:.1f} min")
+    print(f"Rolling stochastic MPC [{args.engine}]: {len(days)} days in {elapsed / 60:.1f} min")
     print(f"计划购电量  {total_plan:14,.4f} kWh")
     print(f"最终调整量  {total_adj:14,.4f} kWh")
     print(f"紧急购电量  {total_emg:14,.4f} kWh")

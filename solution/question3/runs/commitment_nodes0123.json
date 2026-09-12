@@ -1,0 +1,26 @@
+{
+  "engine": "commitment",
+  "nodes": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "start": "2025-02-01",
+  "end": "2025-12-31",
+  "n_days": 334,
+  "n_scenarios": 5,
+  "lookback_days": 90,
+  "settlement": "sequential",
+  "elapsed_s": 277.48205429999507,
+  "terminal_soc_kwh": 6804.508718818067,
+  "planned_cost": 12706276.644571494,
+  "reduce_penalty": -239798.2104351613,
+  "increase_cost": 723207.0227255662,
+  "emergency_cost": 517182.9191117128,
+  "total_cost": 13706868.37597362,
+  "plan_kwh": 20808693.56332599,
+  "adjusted_kwh": 20669072.24655266,
+  "emergency_kwh": 92255.92995946515,
+  "final_net_total": 13632338.812213864
+}
