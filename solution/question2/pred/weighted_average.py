@@ -1,27 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Weighted average predictor: weighted average of past 4 same-weekday days."""
+"""weighted_average implementation."""
 
 import numpy as np
 from .base import BasePredictor
 
 
 class WeightedAveragePredictor(BasePredictor):
-    """Predict using weighted average of past 4 same-weekday days.
-    
-    Weights: 1, 2, 3, 4 for the 4 most recent same-weekday days
-    (most recent has weight 4, oldest has weight 1)
-    """
+    """WeightedAveragePredictor implementation."""
     
     def predict(self, target_date: str) -> tuple:
-        """Predict load and PV for target date using weighted average.
-        
-        Args:
-            target_date: target date string (e.g., "2025-02-01")
-        
-        Returns:
-            load_pred: array of shape (144,) predicted load in kW
-            pv_pred: array of shape (144,) predicted PV power in kW
-        """
+        """predict implementation."""
         target_idx = self._get_date_index(target_date)
         same_weekday_indices = self._get_same_weekday_indices(target_idx, n_weeks=4)
         

@@ -1,43 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Fourier (harmonic) regression predictor for Question 2.
-
-Design matrix for day index d (11 columns):
-
-    x_d = [e_0..e_6, sin(2*pi*d/365), cos(2*pi*d/365),
-           sin(4*pi*d/365), cos(4*pi*d/365)]
-
-  * e_0..e_6         : weekday one-hot (Monday = 0), exactly one is 1
-  * sin/cos(2*pi...) : annual harmonic
-  * sin/cos(4*pi...) : semi-annual (2nd) harmonic
-
-The intercept column is omitted on purpose: the seven weekday dummies sum to
-1, so a separate intercept would be collinear with them (the design would be
-rank-deficient).  Dropping it leaves the column space unchanged.
-
-One OLS is solved per 10-minute slot t (144 independent regressions that
-share the same design matrix, since the features depend only on the day):
-
-    beta_t = argmin |X beta - y_t|^2  ->  N_hat(d,t) = x_d^T beta_t
-
-Only data strictly before the target day is used (no look-ahead), so the
-predictor can be rolled forward day by day.
-
-Target variable is the NET load N = L - P.  The day-ahead LP of Question 2
-only ever sees ``load_forecast - pv_forecast``, so the predictor returns
-``(N_hat, zeros)`` and is a drop-in replacement for the (L, P) predictors.
-
-``FourierQuantilePredictor`` adds a newsboy-style safety margin on top of the
-point forecast, using the quantile of the model's own past rolling
-out-of-sample residuals.  Under Question 2's asymmetric penalty (emergency
-power costs 5x the normal price) the cost-optimal target is the
-5/(5+1) = 83.3% quantile of the net-load distribution, not its mean.
-
-Note on conditioning: the harmonic columns vary only slowly over short
-windows, so a fit is only reliable for a *short* extrapolation.  In rolling
-mode the target day is one day past the training window, which is fine;
-refitting on a truncated window and extrapolating further ahead is not, and
-is deliberately avoided here.
-"""
+"""fourier implementation."""
 
 from __future__ import annotations
 
@@ -52,12 +14,7 @@ N_FEATURES = 11         # 7 weekday + 2*2 harmonics (no intercept)
 
 
 def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
-    """Return the (n, 11) Fourier design matrix for the given days.
-
-    Args:
-        day_index: 0-based day index used for the harmonic terms.
-        weekday:   Monday-based weekday (0..6) used for the one-hot block.
-    """
+    """build_design implementation."""
     day_index = np.asarray(day_index, dtype=float)
     weekday = np.asarray(weekday, dtype=int)
     n = day_index.size
@@ -72,14 +29,7 @@ def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
 
 
 class FourierPredictor(BasePredictor):
-    """Harmonic regression on net load with a rolling expanding window.
-
-    Args:
-        window:        number of most recent days used for training
-                       (None = use every day from the start of the series).
-        n_min_days:    below this many training days fall back to the mean of
-                       whatever history exists instead of raising.
-    """
+    """FourierPredictor implementation."""
 
     def __init__(
         self,
@@ -119,7 +69,7 @@ class FourierPredictor(BasePredictor):
             raise ValueError(f"Date {date_str} not found in data") from exc
 
     def predict(self, target_date: str) -> tuple:
-        """Predict net load for ``target_date``; returns (N_hat, zeros(144))."""
+        """predict implementation."""
         idx = self._row(target_date)
 
         start = 0 if self.window is None else max(0, idx - self.window)
@@ -138,7 +88,7 @@ class FourierPredictor(BasePredictor):
 
     # ------------------------------------------------------------------ #
     def _fit(self, rows: np.ndarray) -> np.ndarray:
-        """OLS for all 144 slots at once -> (11, 144) coefficient matrix."""
+        """_fit implementation."""
         X = build_design(rows, self._weekday[rows])
         Y = self.net[rows]
         if X.shape[0] < X.shape[1]:  # rank-deficient: minimum-norm solution
@@ -154,15 +104,7 @@ class FourierPredictor(BasePredictor):
 
 
 class FourierQuantilePredictor(FourierPredictor):
-    """Fourier point forecast + per-slot newsboy safety margin.
-
-    The margin is the ``quantile`` of the model's own rolling
-    *out-of-sample* residuals of the past ``residual_days`` days (all of them
-    strictly earlier than the target day, so there is no look-ahead).  With
-    Question 2's settlement (normal price p, emergency price 5p) the
-    cost-minimising target is the C_u/(C_u+C_o) = 5/6 quantile of the net
-    load, i.e. ``quantile=5/6``.
-    """
+    """FourierQuantilePredictor implementation."""
 
     def __init__(
         self,
@@ -189,7 +131,7 @@ class FourierQuantilePredictor(FourierPredictor):
         self._residuals = None
 
     def rolling_residuals(self) -> np.ndarray:
-        """(n_days, 144) matrix of one-day-ahead errors; NaN where unknown."""
+        """rolling_residuals implementation."""
         if self._residuals is None:
             n_days = self.net.shape[0]
             out = np.full(self.net.shape, np.nan)
@@ -218,12 +160,7 @@ def fit_with_lags(
     target_idx: int,
     lags: tuple,
 ) -> np.ndarray:
-    """Per-slot OLS on ``[Fourier design | net-load lags]`` -> prediction (144,).
-
-    The Fourier block is identical for every slot, but the residual
-    autocorrelation of the net load is not, so the lag block is fitted
-    separately for each of the 144 slots (144 independent regressions).
-    """
+    """fit_with_lags implementation."""
     n_features = N_FEATURES + len(lags)
     keep = rows[rows - max(lags) >= 0]
 
@@ -250,21 +187,7 @@ def fit_with_lags(
 
 
 class FourierLagQuantilePredictor(BasePredictor):
-    """Fourier + net-load lags, plus a newsboy quantile safety margin.
-
-    Two upgrades over :class:`FourierQuantilePredictor`:
-
-    * the per-slot regression adds the last ``lags`` days of the *same*
-      10-minute slot as extra regressors, which captures short-run
-      autocorrelation the 11-column Fourier design cannot see;
-    * the safety margin is the ``quantile`` of the model's own rolling
-      out-of-sample residuals of the past ``residual_days`` days.
-
-    Under Question 2's settlement (normal price p, emergency price 5p) the
-    cost-minimising day-ahead target is a high quantile of the net load, not
-    its mean.  All quantities are estimated strictly from data earlier than
-    the target day, so the predictor rolls forward without look-ahead.
-    """
+    """FourierLagQuantilePredictor implementation."""
 
     def __init__(
         self,
@@ -302,14 +225,14 @@ class FourierLagQuantilePredictor(BasePredictor):
             raise ValueError(f"Date {date_str} not found in data") from exc
 
     def _point(self, idx: int) -> np.ndarray:
-        """Point forecast of the net load for row ``idx`` (no margin)."""
+        """_point implementation."""
         rows = np.arange(0, idx)
         if rows.size < self.n_min_days:
             raise ValueError(f"Cannot predict row {idx}: need >= {self.n_min_days} days")
         return fit_with_lags(self.net, self._weekday, rows, idx, self.lags)
 
     def rolling_residuals(self) -> np.ndarray:
-        """(n_days, 144) matrix of one-day-ahead errors; NaN where unknown."""
+        """rolling_residuals implementation."""
         if self._residuals is None:
             n_days = self.net.shape[0]
             out = np.full(self.net.shape, np.nan)
@@ -319,7 +242,7 @@ class FourierLagQuantilePredictor(BasePredictor):
         return self._residuals
 
     def predict(self, target_date: str) -> tuple:
-        """Predict net load for ``target_date``; returns (N_hat, zeros(144))."""
+        """predict implementation."""
         idx = self._row(target_date)
         pred = self._point(idx)
         residuals = self.rolling_residuals()

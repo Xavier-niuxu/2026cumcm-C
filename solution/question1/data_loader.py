@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Load data from Appendix 1 (附件1.xlsx)."""
+"""data_loader implementation."""
 
 from pathlib import Path
 
@@ -13,7 +13,7 @@ DELTA_T = 10 / 60  # 10 min in hours
 
 
 def _parse_time(raw: str) -> pd.Timestamp:
-    """Parse time string like '00:10:00' or '0:00+1' (next day marker)."""
+    """_parse_time implementation."""
     s = str(raw).strip()
     day_offset = 0
     if s.endswith("+1"):
@@ -29,9 +29,7 @@ def _parse_time(raw: str) -> pd.Timestamp:
 
 
 def load_data(file_path: Path | str = DATA_FILE) -> pd.DataFrame:
-    """Return a cleaned DataFrame with columns:
-    step, time, minute_of_day, price, load, pv_forecast.
-    """
+    """load_data implementation."""
     file_path = Path(file_path)
     df = pd.read_excel(file_path, sheet_name="Sheet1")
 
@@ -52,7 +50,7 @@ def load_data(file_path: Path | str = DATA_FILE) -> pd.DataFrame:
 
 
 def load_arrays(file_path: Path | str = DATA_FILE):
-    """Return (step, price, load, pv_forecast) as numpy arrays."""
+    """load_arrays implementation."""
     df = load_data(file_path)
     return (
         df["step"].to_numpy(),

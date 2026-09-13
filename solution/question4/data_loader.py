@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Load historical data from 附件2.xlsx (load/PV) and 附件4.xlsx (time-varying price)."""
+"""data_loader implementation."""
 
 from pathlib import Path
 
@@ -14,7 +14,7 @@ DELTA_T = 10 / 60  # 10 min in hours
 
 
 def _parse_time_columns(df: pd.DataFrame) -> tuple:
-    """Extract date column and time slot columns from wide-format DataFrame."""
+    """_parse_time_columns implementation."""
     date_col = df.columns[0]
     time_cols = df.columns[1:]  # 144 time slots
     dates = df[date_col].values
@@ -23,49 +23,25 @@ def _parse_time_columns(df: pd.DataFrame) -> tuple:
 
 
 def load_historical_load(file_path: Path | str = DATA_FILE_LOAD) -> tuple:
-    """Load historical load data from 附件2.xlsx.
-    
-    Returns:
-        dates: array of shape (365,) with date strings
-        data: array of shape (365, 144) with load values in kW
-    """
+    """load_historical_load implementation."""
     df = pd.read_excel(file_path, sheet_name="小区负载")
     return _parse_time_columns(df)
 
 
 def load_historical_pv(file_path: Path | str = DATA_FILE_LOAD) -> tuple:
-    """Load historical PV actual power from 附件2.xlsx.
-    
-    Returns:
-        dates: array of shape (365,) with date strings
-        data: array of shape (365, 144) with PV power values in kW
-    """
+    """load_historical_pv implementation."""
     df = pd.read_excel(file_path, sheet_name="光伏发电实际功率")
     return _parse_time_columns(df)
 
 
 def load_time_varying_price(file_path: Path | str = DATA_FILE_PRICE) -> tuple:
-    """Load time-varying electricity price from 附件4.xlsx.
-    
-    Returns:
-        dates: array of shape (365,) with date strings
-        price: array of shape (365, 144) with price values in yuan/kWh
-    """
+    """load_time_varying_price implementation."""
     df = pd.read_excel(file_path, sheet_name="Sheet1")
     return _parse_time_columns(df)
 
 
 def get_day_price(dates: np.ndarray, price: np.ndarray, date_str: str) -> np.ndarray:
-    """Get price for a specific date.
-    
-    Args:
-        dates: array of date strings
-        price: array of shape (365, 144)
-        date_str: target date string (e.g., "2025-02-01")
-    
-    Returns:
-        array of shape (144,) with price for that date
-    """
+    """get_day_price implementation."""
     # Try exact match first
     mask = dates == date_str
     if mask.any():
@@ -85,16 +61,7 @@ def get_day_price(dates: np.ndarray, price: np.ndarray, date_str: str) -> np.nda
 
 
 def get_day_data(dates: np.ndarray, data: np.ndarray, date_str: str) -> np.ndarray:
-    """Get data for a specific date.
-    
-    Args:
-        dates: array of date strings
-        data: array of shape (365, 144)
-        date_str: target date string (e.g., "2025-01-08")
-    
-    Returns:
-        array of shape (144,) with data for that date
-    """
+    """get_day_data implementation."""
     # Try exact match first
     mask = dates == date_str
     if mask.any():
@@ -114,7 +81,7 @@ def get_day_data(dates: np.ndarray, data: np.ndarray, date_str: str) -> np.ndarr
 
 
 def get_date_index(dates: np.ndarray, date_str: str) -> int:
-    """Get the index of a date in the dates array."""
+    """get_date_index implementation."""
     mask = dates == date_str
     if mask.any():
         return int(np.where(mask)[0][0])

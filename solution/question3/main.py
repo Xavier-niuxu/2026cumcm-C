@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-"""问题 3：滚动随机 MPC 全年求解 + 写出 result3.xlsx。
-
-用法::
-
-    python3 main.py                       # 全年主模型（默认 5 个加权聚类场景）
-    python3 main.py --engine legacy --scenarios 12  # 原两阶段实现
-    python3 main.py --nodes 0,1           # 只用 0:00 与 6:00 的预报
-    python3 main.py --deterministic       # 单场景（点预报）
-    python3 main.py --start 2025-06-01 --end 2025-06-30   # 只跑一段时间
-"""
+"""main implementation."""
 
 from __future__ import annotations
 
@@ -56,13 +47,7 @@ def slot_label(t: int) -> str:
 
 
 def time_columns() -> list:
-    """Column labels for the 144 slots, taken verbatim from the result3 template.
-
-    Note: the template labels start at "0:10-0:20" (shifted by one interval
-    relative to the physical slots), which is the same convention as the
-    result1/result2 deliverables, so the labels are copied as-is and the first
-    value still corresponds to the 0:00-0:10 interval.
-    """
+    """time_columns implementation."""
     if FILE_TEMPLATE.exists():
         tmpl = pd.read_excel(FILE_TEMPLATE, sheet_name="计划购电量", nrows=1)
         cols = list(tmpl.columns)

@@ -1,7 +1,0 @@
-# Reproduction environment for the 13,706,868.38-yuan annual result.
-# K-means has multiple local optima, so its version is intentionally pinned.
-numpy==2.4.4
-scipy==1.17.1
-scikit-learn==1.9.0
-pandas==3.0.3
-openpyxl==3.1.5

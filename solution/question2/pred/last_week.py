@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Last week predictor: use data from exactly 7 days ago."""
+"""last_week implementation."""
 
 import numpy as np
 from .base import BasePredictor
 
 
 class LastWeekPredictor(BasePredictor):
-    """Predict using data from exactly 7 days ago (last week same day)."""
+    """LastWeekPredictor implementation."""
     
     def predict(self, target_date: str) -> tuple:
-        """Predict load and PV for target date using last week's data.
-        
-        Args:
-            target_date: target date string (e.g., "2025-02-01")
-        
-        Returns:
-            load_pred: array of shape (144,) predicted load in kW
-            pv_pred: array of shape (144,) predicted PV power in kW
-        """
+        """predict implementation."""
         target_idx = self._get_date_index(target_date)
         
         # Find exactly 7 days ago

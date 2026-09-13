@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Prediction module with different forecasting strategies."""
+"""prediction implementation."""
 
 from abc import ABC, abstractmethod
 import numpy as np
@@ -7,7 +7,7 @@ import pandas as pd
 
 
 class BasePredictor(ABC):
-    """Base class for load and PV predictors."""
+    """BasePredictor implementation."""
     
     def __init__(self, dates_load: np.ndarray, load_data: np.ndarray,
                  dates_pv: np.ndarray, pv_data: np.ndarray):
@@ -18,12 +18,7 @@ class BasePredictor(ABC):
     
     @abstractmethod
     def predict(self, target_date: str) -> tuple:
-        """Predict load and PV for target date.
-        
-        Returns:
-            load_pred: array of shape (144,) predicted load in kW
-            pv_pred: array of shape (144,) predicted PV power in kW
-        """
+        """predict implementation."""
         pass
     
     def _get_date_index(self, date_str: str) -> int:
@@ -52,7 +47,7 @@ class BasePredictor(ABC):
 
 
 class WeightedAveragePredictor(BasePredictor):
-    """Weighted average of past 4 same-weekday days. Weights: 4,3,2,1."""
+    """WeightedAveragePredictor implementation."""
     
     def predict(self, target_date: str) -> tuple:
         target_idx = self._get_date_index(target_date)
@@ -75,7 +70,7 @@ class WeightedAveragePredictor(BasePredictor):
 
 
 class LastWeekPredictor(BasePredictor):
-    """Use data from exactly 7 days ago."""
+    """LastWeekPredictor implementation."""
     
     def predict(self, target_date: str) -> tuple:
         target_idx = self._get_date_index(target_date)
@@ -88,7 +83,7 @@ class LastWeekPredictor(BasePredictor):
 
 
 class LinearFitPredictor(BasePredictor):
-    """Linear regression on past 4 same-weekday days."""
+    """LinearFitPredictor implementation."""
     
     def predict(self, target_date: str) -> tuple:
         target_idx = self._get_date_index(target_date)

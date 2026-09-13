@@ -1,19 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-问题1：确定性日前调度线性规划
-
-模型依据《C题_参考论文.pdf》第6节：
-    g_t + P_hat_t * Δt + d_t >= L_hat_t * Δt + c_t
-    S_{t+1} = S_t + η c_t - d_t / η
-    1200 <= S_t <= 10800
-    0 <= c_t, d_t <= 5000 Δt
-    g_t >= 0
-    S_1 = S_145 = 6000
-目标：
-    min sum_t p_t g_t + ε sum_t(c_t+d_t)
-
-这里 c_t、d_t、g_t 均按“kWh/10min”计，S_t 为每个10分钟周期开始时的储能电量。
-"""
+"""LP implementation."""
 
 from __future__ import annotations
 
@@ -52,7 +38,7 @@ class LPResult:
 
 
 def _indices(n: int):
-    """Return contiguous variable slices."""
+    """_indices implementation."""
     g = slice(0, n)
     c = slice(n, 2 * n)
     d = slice(2 * n, 3 * n)
@@ -75,11 +61,7 @@ def solve_question1(
     eps: float = EPS,
     method: str = "highs",
 ) -> LPResult:
-    """
-    Solve the deterministic day-ahead LP using scipy.optimize.linprog.
-
-    The formulation exactly follows the reference paper's Question 1 model.
-    """
+    """solve_question1 implementation."""
     step = np.asarray(step)
     price = np.asarray(price, dtype=float)
     load = np.asarray(load, dtype=float)

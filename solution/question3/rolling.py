@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Rolling execution of one day + realised settlement (Question 3).
-
-``run_day`` 按 0:00/6:00/12:00/18:00 依次求解随机 MPC，只执行到下一个发布时刻
-的决策，滚动前移；最后用**实际**负荷与光伏结算，得到
-
-    费用 = Σ p*g0 + Σ 0.5*p*max(0, g0-ga) + Σ 1.5*p*max(0, ga-g0) + Σ 5*p*e
-
-``nodes`` 参数用于消融实验：只保留部分发布时刻（例如 (0,) 表示完全不调整、
-(0,1) 表示只用 6:00 的预报），从而回答"是否需要引入其他时刻的预报"。
-"""
+"""rolling implementation."""
 
 from __future__ import annotations
 
@@ -57,20 +48,7 @@ def run_day(
     p_max_slot: float = 833.3333333333334,
     settlement_price: np.ndarray | None = None,
 ) -> dict:
-    """Run one day and return the full plan / execution / settlement.
-
-    ``battery_mode``:
-        ``"committed"`` 只执行 LP 在决策时刻定下的充放电量（保守口径）；
-        ``"realtime"``  实际执行时按 **当前 10 min 的真实缺额**驱动储能
-        （缺电则放电、富余则充电，受功率与 SOC 限制），只有储能无能为力时
-        才紧急购电。后者对应参考解 "因果实时储能执行" 的口径。
-
-    ``settlement_price``：
-        结算电价（144,）。``price`` 始终是**计划电价**（进入 MPC 目标函数，
-        决定何时买电/储电）；给出 ``settlement_price`` 时，计划购电费、调减
-        违约金、调增购电费与紧急购电费全部按该实际电价结算。``None`` 时退回
-        问题 3 的固定电价口径（结算价 = 计划价）。
-    """
+    """run_day implementation."""
     nodes = tuple(sorted(set(nodes)))
     if 0 not in nodes:
         raise ValueError("node 0 (0:00) must always be included")
@@ -141,10 +119,10 @@ def run_day(
             }
         )
 
-    # ---------------- 实际结算 ----------------
-    net_act = (load_actual[day] - pv_actual[day]) * DELTA_T          # kWh/时段
+    # Implementation detail.
+    net_act = (load_actual[day] - pv_actual[day]) * DELTA_T          # Implementation detail.
     if battery_mode == "realtime":
-        # 因果执行：先看每个 10 min 的真实缺额，由储能补/吸，缺口才紧急购电
+        # Implementation detail.
         charge = np.zeros(N_SLOTS)
         discharge = np.zeros(N_SLOTS)
         soc_path = np.zeros(N_SLOTS + 1)
@@ -152,10 +130,10 @@ def run_day(
         for t in range(N_SLOTS):
             gap = net_act[t] - ga[t]
             s = soc_path[t]
-            if gap > 0:                       # 缺电 -> 放电
+            if gap > 0:                       # Implementation detail.
                 discharge[t] = min(gap, p_max_slot, max(0.0, (s - soc_floor)) * ETA)
                 charge[t] = 0.0
-            else:                             # 富余 -> 充电
+            else:                             # Implementation detail.
                 charge[t] = min(-gap, p_max_slot, max(0.0, (soc_ceil - s)) / ETA)
                 discharge[t] = 0.0
             soc_path[t + 1] = s + ETA * charge[t] - discharge[t] / ETA
@@ -164,14 +142,14 @@ def run_day(
         raise ValueError(f"unknown battery_mode: {battery_mode}")
     need = net_act + charge - discharge
     emergency = np.maximum(0.0, need - ga)
-    short = np.maximum(0.0, ga - need)          # 计划外多购（不产生收益）
+    short = np.maximum(0.0, ga - need)          # Implementation detail.
 
-    # 费用分解（与题目表述一致）：
-    #   计划购电费  = Σ p*g0
-    #   调减冲减    = -0.5*p*max(0, g0-ga)   （取消部分相对原计划节省 50%）
-    #   调增费用    = +1.5*p*max(0, ga-g0)   （超出部分按 1.5 倍支付）
-    #   紧急购电费  = 5*p*e
-    # 合计 = Σ [p*ga + 0.5*p*|g0-ga|] + 5*p*e
+    # Implementation detail.
+    # Implementation detail.
+    # Implementation detail.
+    # Implementation detail.
+    # Implementation detail.
+    # Implementation detail.
     settle = price if settlement_price is None else np.asarray(settlement_price)
     planned_cost = float(np.dot(settle, plan))
     reduce_penalty = -float(
@@ -205,7 +183,7 @@ def run_day(
 
 
 def check_feasibility(result: dict, *, s_end: float = 6000.0, tol: float = 1e-6) -> dict:
-    """Verify SOC bounds / terminal SOC implied by the executed charge-discharge."""
+    """check_feasibility implementation."""
     charge, discharge, soc = result["charge"], result["discharge"], result["soc"]
     rebuilt = np.empty(N_SLOTS + 1)
     rebuilt[0] = soc[0]

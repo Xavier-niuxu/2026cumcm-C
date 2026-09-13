@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""问题1结果输出：生成附件5/result1.xlsx。"""
+"""output implementation."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from LP import LPResult
 
 
 def _time_label(t: int) -> str:
-    """10-minute interval label for t=0,...,143."""
+    """_time_label implementation."""
     h1 = (t * 10) // 60
     m1 = (t * 10) % 60
     h2 = ((t + 1) * 10) // 60
@@ -51,7 +51,7 @@ def build_purchase_sheet(ans: LPResult) -> pd.DataFrame:
 
 
 def build_storage_sheet(ans: LPResult) -> pd.DataFrame:
-    # 题目表2要求六个4小时区间的充放电量，以及0:00/24:00储电量。
+    # Implementation detail.
     rows = []
     for k in range(6):
         lo = k * 24
@@ -76,7 +76,7 @@ def build_storage_sheet(ans: LPResult) -> pd.DataFrame:
 
 
 def build_full_schedule_sheet(ans: LPResult) -> pd.DataFrame:
-    """附加完整调度表，便于复核论文中的能量平衡与SOC轨迹。"""
+    """build_full_schedule_sheet implementation."""
     n = len(ans.grid_purchase)
     dt = 1 / 6
     return pd.DataFrame({
@@ -96,14 +96,7 @@ def build_full_schedule_sheet(ans: LPResult) -> pd.DataFrame:
 
 
 def save_result1(ans: LPResult, output_path: Path | str) -> Path:
-    """
-    保存到附件5/result1.xlsx。
-
-    工作表：
-      1. 计划购电量：144个10分钟计划购电量 + 全天汇总
-      2. 充放电量：六个4小时区间 + 0:00/24:00储电量
-      3. 完整调度：完整逐10分钟购电、充放电和SOC轨迹（便于检查）
-    """
+    """save_result1 implementation."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

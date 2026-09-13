@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""问题1主程序：读取附件1 -> LP求解 -> 输出result1.xlsx。"""
+"""main implementation."""
 
 from __future__ import annotations
 
@@ -10,21 +10,9 @@ from output import print_summary, save_result1
 
 
 def main() -> None:
-    # 项目目录假定为：
-    # project/
-    # ├─ 附件/
-    # │  └─ 附件1.xlsx
-    # └─ solution/
-    #    └─ question1/
-    #       ├─ data_loader.py
-    #       ├─ LP.py
-    #       ├─ output.py
-    #       └─ main.py
-    #
-    # 因此 result1.xlsx 自动写入 project/附件5/result1.xlsx。
     project_root = Path(__file__).resolve().parents[2]
     data_file = project_root / "附件" / "附件1.xlsx"
-    output_file = project_root / "附件5" / "result1.xlsx"
+    output_file = project_root / "附件" / "附件5" / "result1.xlsx"
 
     if not data_file.exists():
         raise FileNotFoundError(
@@ -37,7 +25,7 @@ def main() -> None:
 
     print_summary(ans)
 
-    # 输出分时段储能信息
+    # Implementation detail.
     print("\n分时段储能充放电量（六个4小时区间）：")
     print(f"{'时间段':<15}{'充电量/kWh':>16}{'放电量/kWh':>16}")
     for k in range(6):

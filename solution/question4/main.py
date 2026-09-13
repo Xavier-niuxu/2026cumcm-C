@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Question 4 (as Question 2) main entry point: time-varying price.
-
-The model keeps the Question 2 two-stage structure and only swaps the price
-for the 附件4 time-varying curve:
-
-* the day-ahead LP plans the purchase on the *forecast* net load and the
-  *forecast* price (``PriceFourierPredictor``);
-* real-time settlement bills the planned quantity at the *actual* 附件4 price,
-  flexes the battery against the realised net load and buys the residual
-  shortfall as emergency power at 5x the actual price.
-"""
+"""main implementation."""
 
 from pathlib import Path
 
@@ -57,13 +47,7 @@ def run_question4_single_date(
     s_max_plan: float = S_MAX_PLAN,
     s_end_min: float = S_END_MIN,
 ):
-    """Run question 4 for a single date. Returns LPResult.
-
-    ``s_init`` is the battery SOC at 0:00 of ``target_date``; it is the previous
-    day's closing SOC so that the storage state stays continuous across days.
-    The forecast price drives the day-ahead plan, the actual 附件4 price settles
-    both the normal and the emergency bill.
-    """
+    """run_question4_single_date implementation."""
     load_pred, pv_pred = predictor.predict(target_date)
     price_pred = price_predictor.predict(target_date)
     load_actual = get_day_data(dates_load, load_data, target_date)
@@ -77,7 +61,7 @@ def run_question4_single_date(
 
 
 def _aggregate_4h_blocks(arr_144):
-    """Sum 144 x 10-min intervals into 6 x 4-hour blocks."""
+    """_aggregate_4h_blocks implementation."""
     blocks = []
     for b in range(6):
         blocks.append(arr_144[b * 24:(b + 1) * 24].sum())
@@ -85,7 +69,7 @@ def _aggregate_4h_blocks(arr_144):
 
 
 def run_question4_full_year(predictor: BasePredictor) -> None:
-    """Run question 4 for full year and write results to result4-2.xlsx."""
+    """run_question4_full_year implementation."""
     print(f"=== Question 4 Full Year Analysis (2025-02-01 to 2025-12-31) ===")
     print(f"Predictor: {predictor.__class__.__name__}\n")
 
@@ -104,7 +88,7 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
 
     print(f"Processing {n_days} days from {start_date} to {end_date}...\n")
 
-    # Read template to get column structure.  The 144 slot labels of 附件1/附件4
+    # Implementation detail.
     # ("0:10" ... "0:00+1") are identical to the template's, so the arrays are
     # written in their natural order -- no reordering is needed.
     template = pd.read_excel(OUTPUT_FILE, sheet_name="计划购电量")
@@ -150,7 +134,7 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
         except ValueError as e:
             print(f"Warning: Skipping {target_date}: {e}")
 
-    # === Write Sheet 1: 计划购电量 ===
+    # Implementation detail.
     print("\nWriting results to Excel...")
 
     df_grid = pd.DataFrame(grid_purchase_all, columns=time_cols)
@@ -159,7 +143,7 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
     df_grid["全天购电量"] = grid_purchase_all.sum(axis=1)
     df_grid["全天购电费"] = normal_cost_all
 
-    # === Write Sheet 2: 充放电量 ===
+    # Implementation detail.
     rows_charge = []
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
         date_str = str(dates_load[idx])[:10]
@@ -189,7 +173,7 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
 
     df_charge = pd.DataFrame(rows_charge)
 
-    # === Write Sheet 3: 紧急购电量 ===
+    # Implementation detail.
     # Each 10-min interval is a separate row (only output slots with emergency > 0)
     emergency_rows = []
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
@@ -237,12 +221,12 @@ def run_question4_full_year(predictor: BasePredictor) -> None:
 
 
 if __name__ == "__main__":
-    # 加载历史数据
+    # Implementation detail.
     dates_load, load_data = load_historical_load()
     dates_pv, pv_data = load_historical_pv()
 
-    # 傅里叶 + 净负荷滞后项预测 + 新闻童分位安全边际（问题二口径）
-    # （紧急购电价 = 5 倍正常电价，故日前计划量取净负荷的高分位数而非均值）
+    # Implementation detail.
+    # Implementation detail.
     predictor = FourierLagQuantilePredictor(
         dates_load, load_data, dates_pv, pv_data,
         lags=(1, 2, 3), quantile=0.75, residual_days=30,

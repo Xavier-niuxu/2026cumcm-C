@@ -1,17 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Backtest and compare the day-ahead predictors of Question 2.
-
-Runs every predictor in a rolling fashion over 2025-02-01 .. 2025-12-31:
-each day is planned with the predictor's forecast, then scored against the
-actual load/PV with the real settlement rule (emergency power = 5x price).
-
-    python compare_predictors.py            # main table
-    python compare_predictors.py --margin   # + safety-margin sweep
-    python compare_predictors.py --quantile # + Fourier quantile sweep
-
-All predictors are scored on the same quantity, the net load N = L - P,
-because the day-ahead LP and the emergency settlement only depend on it.
-"""
+"""compare_predictors implementation."""
 
 from __future__ import annotations
 
@@ -53,7 +41,7 @@ S_END_MIN = 2500.0
 
 
 class ScalingPredictor:
-    """Wrap a (load, pv) predictor with a multiplicative safety margin."""
+    """ScalingPredictor implementation."""
 
     def __init__(self, base, load_scale=1.0, pv_scale=1.0):
         self.base = base
@@ -66,11 +54,7 @@ class ScalingPredictor:
 
 
 class PointOnly:
-    """Strip the newsboy margin off a quantile predictor.
-
-    The MAE table must compare *point* forecasts, otherwise the additive safety
-    margin (which is deliberately biased high) would inflate the reported error.
-    """
+    """PointOnly implementation."""
 
     def __init__(self, predictor):
         self.predictor = predictor
@@ -82,11 +66,7 @@ class PointOnly:
 
 
 def evaluate(predictor, dates, load, pv, price, verbose=False):
-    """Return a dict of accuracy + cost metrics for one predictor.
-
-    The battery SOC is carried across days (only 2025-01-01 0:00 is fixed at
-    6000 kWh), matching the production settlement in ``main.py``.
-    """
+    """evaluate implementation."""
     net_actual = load - pv
     forecast_err, actuals = [], []
     daily_cost, daily_mae, stamps = [], [], []

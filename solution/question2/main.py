@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Question 2 main entry point."""
+"""main implementation."""
 
 from pathlib import Path
 
@@ -51,13 +51,7 @@ def run_question2_single_date(
     s_max_plan: float = S_MAX_PLAN,
     s_end_min: float = S_END_MIN,
 ):
-    """Run question 2 for a single date. Returns LPResult and date string.
-
-    ``s_init`` is the battery SOC at 0:00 of ``target_date``; it is the previous
-    day's closing SOC so that the storage state stays continuous across days.
-    ``s_max_plan`` / ``s_end_min`` define the day-ahead planning band and
-    terminal reserve (see the module constants).
-    """
+    """run_question2_single_date implementation."""
     load_pred, pv_pred = predictor.predict(target_date)
     load_actual = get_day_data(dates_load, load_data, target_date)
     pv_actual = get_day_data(dates_pv, pv_data, target_date)
@@ -69,7 +63,7 @@ def run_question2_single_date(
 
 
 def _generate_time_columns():
-    """Generate 144 time slot column labels matching the template."""
+    """_generate_time_columns implementation."""
     cols = []
     for i in range(144):
         start_min = i * 10
@@ -84,7 +78,7 @@ def _generate_time_columns():
 
 
 def _aggregate_4h_blocks(arr_144):
-    """Sum 144 x 10-min intervals into 6 x 4-hour blocks."""
+    """_aggregate_4h_blocks implementation."""
     blocks = []
     for b in range(6):
         blocks.append(arr_144[b * 24:(b + 1) * 24].sum())
@@ -92,7 +86,7 @@ def _aggregate_4h_blocks(arr_144):
 
 
 def run_question2_full_year(predictor: BasePredictor) -> None:
-    """Run question 2 for full year and write results to result2.xlsx."""
+    """run_question2_full_year implementation."""
     print(f"=== Question 2 Full Year Analysis (2025-02-01 to 2025-12-31) ===")
     print(f"Predictor: {predictor.__class__.__name__}\n")
 
@@ -153,7 +147,7 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
         except ValueError as e:
             print(f"Warning: Skipping {target_date}: {e}")
 
-    # === Write Sheet 1: 计划购电量 ===
+    # Implementation detail.
     print("\nWriting results to Excel...")
 
     df_grid = pd.DataFrame(grid_purchase_all, columns=time_cols)
@@ -162,7 +156,7 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
     df_grid["全天购电量"] = grid_purchase_all.sum(axis=1)
     df_grid["全天购电费"] = normal_cost_all
 
-    # === Write Sheet 2: 充放电量 ===
+    # Implementation detail.
     rows_charge = []
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
         date_str = str(dates_load[idx])[:10]
@@ -192,7 +186,7 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
 
     df_charge = pd.DataFrame(rows_charge)
 
-    # === Write Sheet 3: 紧急购电量 ===
+    # Implementation detail.
     # Each 10-min interval is a separate row (only output slots with emergency > 0)
     emergency_rows = []
     for i, idx in enumerate(range(start_idx, end_idx + 1)):
@@ -240,12 +234,12 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
 
 
 if __name__ == "__main__":
-    # 加载历史数据
+    # Implementation detail.
     dates_load, load_data = load_historical_load()
     dates_pv, pv_data = load_historical_pv()
 
-    # 傅里叶 + 净负荷滞后项预测 + 新闻童分位安全边际
-    # （紧急购电价 = 5 倍正常电价，故日前计划量取净负荷的高分位数而非均值）
+    # Implementation detail.
+    # Implementation detail.
     predictor = FourierLagQuantilePredictor(
         dates_load, load_data, dates_pv, pv_data,
         lags=(1, 2, 3), quantile=0.75, residual_days=30,

@@ -1,26 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Fourier (harmonic) regression predictor for electricity prices.
-
-Design matrix for day index d (11 columns):
-
-    x_d = [e_0..e_6, sin(2*pi*d/365), cos(2*pi*d/365),
-           sin(4*pi*d/365), cos(4*pi*d/365)]
-
-  * e_0..e_6         : weekday one-hot (Monday = 0), exactly one is 1
-  * sin/cos(2*pi...) : annual harmonic
-  * sin/cos(4*pi...) : semi-annual (2nd) harmonic
-
-The intercept column is omitted on purpose: the seven weekday dummies sum to
-1, so a separate intercept would be collinear with them (the design would be
-rank-deficient).  Dropping it leaves the column space unchanged.
-
-One OLS is solved per 10-minute slot t (144 independent regressions that
-share the same design matrix, since the features depend only on the day):
-
-    beta_t = argmin |X beta - p_t|^2  ->  P_hat(d,t) = x_d^T beta_t
-
-Only data strictly before the target day is used (no look-ahead).
-"""
+"""price_fourier implementation."""
 
 from __future__ import annotations
 
@@ -34,12 +13,7 @@ N_FEATURES = 11         # 7 weekday + 2*2 harmonics (no intercept)
 
 
 def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
-    """Return the (n, 11) Fourier design matrix for the given days.
-
-    Args:
-        day_index: 0-based day index used for the harmonic terms.
-        weekday:   Monday-based weekday (0..6) used for the one-hot block.
-    """
+    """build_design implementation."""
     day_index = np.asarray(day_index, dtype=float)
     weekday = np.asarray(weekday, dtype=int)
     n = day_index.size
@@ -54,16 +28,7 @@ def build_design(day_index: np.ndarray, weekday: np.ndarray) -> np.ndarray:
 
 
 class PriceFourierPredictor:
-    """Harmonic regression on electricity price with a rolling expanding window.
-
-    Args:
-        dates_price: array of date strings
-        price_data: array of shape (n_days, 144) with price values in yuan/kWh
-        window: number of most recent days used for training
-                (None = use every day from the start of the series).
-        n_min_days: below this many training days fall back to the mean of
-                    whatever history exists instead of raising.
-    """
+    """PriceFourierPredictor implementation."""
 
     def __init__(
         self,
@@ -97,7 +62,7 @@ class PriceFourierPredictor:
             raise ValueError(f"Date {date_str} not found in data") from exc
 
     def predict(self, target_date: str) -> np.ndarray:
-        """Predict price for ``target_date``; returns array of shape (144,)."""
+        """predict implementation."""
         idx = self._row(target_date)
 
         start = 0 if self.window is None else max(0, idx - self.window)
@@ -117,7 +82,7 @@ class PriceFourierPredictor:
         return np.asarray(pred, dtype=float)
 
     def _fit(self, rows: np.ndarray) -> np.ndarray:
-        """OLS for all 144 slots at once -> (11, 144) coefficient matrix."""
+        """_fit implementation."""
         X = build_design(rows, self._weekday[rows])
         Y = self.price_data[rows]
         if X.shape[0] < X.shape[1]:  # rank-deficient: minimum-norm solution

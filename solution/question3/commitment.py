@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
-"""问题 3 的承诺型滚动随机优化实现。
-
-本模块复现论文中费用约 1,370 万元的主方案。与 ``rolling.py`` 中保留的
-两阶段 ``legacy`` 实现不同，本模型在每个预报发布时刻共同决定余下时段的
-购电承诺，并用 5 个加权 K-means 日场景评价未来紧急购电风险。只执行到下一
-发布时刻；实际净负荷到达后，储能按当前缺额因果响应。
-
-所有预测、误差样本和聚类数据都严格来自目标日之前。Q1/Q2 的源文件不会被
-修改；这里的负荷预测器是 Q3 内部的只读兼容实现，用来复现 Q2 傅里叶模型在
-最初 7 天暖启动时的历史误差口径。
-"""
+"""commitment implementation."""
 
 from __future__ import annotations
 
@@ -34,7 +24,7 @@ from data_loader import (
 
 try:
     from sklearn.cluster import KMeans
-except ImportError as exc:  # pragma: no cover - 给出可操作的依赖提示
+except ImportError as exc:  # Implementation detail.
     raise ImportError(
         "承诺型 Q3 引擎需要 scikit-learn；请安装 solution/question3/requirements.txt"
     ) from exc
@@ -44,11 +34,7 @@ P_MAX_SLOT = P_MAX * DELTA_T
 
 
 def _calendar(day: int) -> np.ndarray:
-    """与 Q2 傅里叶回归等价的日历特征。
-
-    7 个星期独热哑变量之和恒为 1，若再加截距列会与之共线（设计矩阵秩亏），
-    故这里不设截距；删去后列空间不变，预测值不受影响。
-    """
+    """_calendar implementation."""
     return np.r_[
         np.eye(7)[day % 7],
         np.sin(2 * np.pi * day / 365.0),
@@ -59,12 +45,7 @@ def _calendar(day: int) -> np.ndarray:
 
 
 class CausalFourierLoadModel:
-    """Q3 内部的严格因果傅里叶负荷预测器。
-
-    第 ``d`` 天只拟合 ``[0,d)``。前 7 天用历史均值暖启动；从第 8 天起使用
-    weekday + annual/semi-annual harmonic OLS。对正式回测区间（2 月 1 日起）
-    它与 Q2 傅里叶模型的预测逐点相同。
-    """
+    """CausalFourierLoadModel implementation."""
 
     def __init__(self, dates, load: np.ndarray):
         self.dates = pd.DatetimeIndex(dates)
@@ -85,7 +66,7 @@ class CausalFourierLoadModel:
 
 
 def causal_load_error_pool(model: CausalFourierLoadModel, dates, load) -> np.ndarray:
-    """生成逐日样本外负荷误差；第 d 行也只由 d 日以前的数据拟合。"""
+    """causal_load_error_pool implementation."""
     out = np.empty_like(np.asarray(load, dtype=float))
     for d, date in enumerate(dates):
         pred, _ = model.predict(str(date)[:10])
@@ -97,14 +78,14 @@ def combined_error_history(
     *, day: int, at_slot: int, load_err: np.ndarray, pv_err: np.ndarray,
     lookback: int,
 ) -> np.ndarray:
-    """目标节点可见的历史净负荷预测误差日型，单位 kW。"""
+    """combined_error_history implementation."""
     start = max(0, day - lookback)
     hist = load_err[start:day, at_slot:] - pv_err[start:day, at_slot:]
     return hist[~np.isnan(hist).any(axis=1)]
 
 
 def reduce_scenarios(hist: np.ndarray, k: int = 5) -> tuple[np.ndarray, np.ndarray]:
-    """用加权 K-means 压缩完整日误差轨迹，保留 10 分钟时序相关性。"""
+    """reduce_scenarios implementation."""
     hist = np.asarray(hist, dtype=float)
     if hist.shape[0] == 0:
         return np.zeros((1, hist.shape[1])), np.ones(1)
@@ -114,8 +95,8 @@ def reduce_scenarios(hist: np.ndarray, k: int = 5) -> tuple[np.ndarray, np.ndarr
     try:
         km = estimator.fit(hist)
     except AttributeError:
-        # 部分 macOS/Anaconda 组合中 threadpoolctl 无法读取 Accelerate 的
-        # version string；这只影响 sklearn 的并行库探测，不影响 K-means 数值。
+        # Implementation detail.
+        # Implementation detail.
         import sklearn.cluster._kmeans as _sk_kmeans
         from contextlib import nullcontext
         _sk_kmeans.threadpool_info = lambda: []
@@ -130,13 +111,7 @@ def solve_commitment(
     previous: np.ndarray | None, scenarios_kw: np.ndarray,
     weights: np.ndarray, s_target: float = S_INIT,
 ) -> tuple[np.ndarray, float]:
-    """求一个发布节点的余下时段购电承诺。
-
-    ``previous is None`` 表示 0:00 首次计划，目标中计入正常购电费；否则用
-    ``q = previous + u - v`` 线性化增购/减购，逐次调整费用为
-    ``1.5*p*u - 0.5*p*v``。每个误差场景拥有独立的充放电、SOC 与紧急购电
-    追索变量，购电承诺 q 在所有场景间共享。
-    """
+    """solve_commitment implementation."""
     point_kw = np.asarray(point_kw, dtype=float)
     price = np.asarray(price, dtype=float)
     scenarios_kw = np.asarray(scenarios_kw, dtype=float)
@@ -224,7 +199,7 @@ def execute_stage(
     purchase: np.ndarray, actual_net_kw: np.ndarray,
     start: int, end: int, s_init: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """只用当前真实净负荷的因果储能执行器。"""
+    """execute_stage implementation."""
     charge = np.zeros(end - start)
     discharge = np.zeros(end - start)
     emergency = np.zeros(end - start)
@@ -259,13 +234,7 @@ def run_day_commitment(
     settlement_price: np.ndarray | None = None,
     **_ignored,
 ) -> dict:
-    """完成一天的滚动决策、因果执行和真实结算。
-
-    ``settlement_price``：结算电价（144,）。``price`` 始终是**计划电价**，
-    进入承诺 LP 目标与"保留原计划"的风险比较；给出 ``settlement_price`` 时，
-    计划购电费、调减违约金、调增购电费与紧急购电费全部按该实际电价结算。
-    ``None`` 时退回问题 3 的固定电价口径（结算价 = 计划价）。
-    """
+    """run_day_commitment implementation."""
     nodes = tuple(sorted(set(nodes)))
     if not nodes or nodes[0] != 0:
         raise ValueError("node 0 (0:00) must always be included")

@@ -1,0 +1,69 @@
+Question 1
+grid_purchase_kwh=59482.6990
+purchase_cost_yuan=35126.9486
+net_load_kwh=55541.9724
+cost_without_storage_yuan=44014.3006
+cost_saving_yuan=8887.3520
+cost_saving_pct=20.1920
+storage_4h
+0:00-4:00	4500.0000	0.0000
+4:00-8:00	833.3333	6365.8412
+8:00-12:00	4787.9643	1702.9970
+12:00-16:00	5286.0352	91.1014
+16:00-20:00	0.0000	5780.1319
+20:00-24:00	5333.3333	2859.8681
+0:00储电量	6000.0000	nan
+24:00储电量	6000.0000	nan
+
+Question 2 predictor comparison
+name	MAE_kW	RMSE_kW	MAPE_pct	plan_10kWh	emergency_10kWh	total_10kyuan	emergency_pct
+LastWeek (t-7)	327.7708	486.4685	92.5809	2007.5041	58.6584	1582.9402	22.3303
+WeightedAverage 4:3:2:1	337.1948	482.4855	83.7433	2002.4940	75.9477	1678.9617	27.0201
+LinearFit (4 same weekdays)	381.2080	563.4875	112.7050	2009.3295	68.2665	1642.2862	24.8853
+Fourier (11 features)	266.6215	385.3559	71.1696	2012.0688	45.7429	1510.5774	18.3316
+Fourier+Intraday (K=6)	681.3973	839.2523	108.2315	1960.8380	173.0704	2068.2051	43.2239
+Fourier+Lag (11+3)	246.5657	368.5777	71.7198	2008.6731	38.8956	1468.9351	16.2094
+Fourier+Lag+q0.75 (final)	306.3210	448.1679	74.8196	2123.5454	7.6523	1358.0542	3.4911
+
+Question 2 final
+grid_purchase_kwh=21235454.2306
+emergency_kwh=76523.3878
+normal_cost_yuan=13106426.2799
+emergency_cost_yuan=474115.5367
+total_cost_yuan=13580541.8167
+
+Question 3 main
+planned_cost_yuan=12706411.3510
+total_cost_yuan=13707686.4872
+plan_kwh=20808908.3151
+adjusted_kwh=20669348.8967
+emergency_kwh=92375.0571
+terminal_soc_kwh=6804.5087
+report_dates	plan_kwh	adjusted_kwh	emergency_kwh	total_cost_yuan
+2025-03-20	68826.6794	65344.1778	1251.1482	49738.9656
+2025-06-21	34858.0658	35241.1753	0.0000	21049.0160
+2025-09-23	67089.7899	66391.3949	737.5106	47101.9604
+2025-12-21	94849.3636	94967.5760	0.0000	62028.2514
+
+Question 3 ablation
+nodes=0	total_cost=14706320.7315	emergency_kwh=327382.6060	terminal_soc=6693.9697
+nodes=0,1	total_cost=14195353.4997	emergency_kwh=188892.4326	terminal_soc=6728.0725
+nodes=0,1,2	total_cost=13994666.4783	emergency_kwh=156872.3821	terminal_soc=6804.5087
+nodes=0,1,2,3	total_cost=13707686.4872	emergency_kwh=92375.0571	terminal_soc=6804.5087
+Question 3 legacy
+total_cost_yuan=14273131.9831
+emergency_kwh=105730.4656
+
+Question 4 two-stage
+grid_purchase_kwh=21234068.8479
+emergency_kwh=76704.8267
+normal_cost_yuan=13811888.8518
+emergency_cost_yuan=503436.1396
+total_cost_yuan=14315324.9914
+Question 4 commitment
+planned_cost_yuan=13418286.4043
+total_cost_yuan=14428397.2857
+plan_kwh=20810409.0057
+adjusted_kwh=20659079.0439
+emergency_kwh=92856.9797
+terminal_soc_kwh=6917.9412

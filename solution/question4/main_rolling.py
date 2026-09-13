@@ -1,20 +1,5 @@
 # -*- coding: utf-8 -*-
-"""问题 4（问题 3 版本）：波动电价下的承诺型滚动随机优化 + 写出 result4-3.xlsx。
-
-与 ``question3/main.py --engine commitment`` 完全同构（0:00/6:00/12:00/18:00
-发布节点的承诺型随机 LP、加权 K-means 日场景、因果实时储能执行、跨日 SOC
-连续、逐次调整结算），只把电价口径换成附件 4 的**波动电价**：
-
-    计划电价 = PriceFourierPredictor 对附件 4 的滚动预测（进入承诺 LP 目标）
-    结算电价 = 附件 4 的实际电价（计划购电费 / 违约金 / 调增费 / 紧急购电费）
-
-用法::
-
-    python main_rolling.py                    # 全年 2025-02-01 ~ 12-31
-    python main_rolling.py --scenarios 12     # 更多场景
-    python main_rolling.py --nodes 0,1        # 只用 0:00 与 6:00 的预报
-    python main_rolling.py --no-write         # 只跑不写盘
-"""
+"""main_rolling implementation."""
 
 from __future__ import annotations
 
@@ -23,9 +8,9 @@ import sys
 import time
 from pathlib import Path
 
-# 问题 3 的 commitment/data_loader/scenarios 之间用裸模块名互相引用，
-# 因此把 question3 目录插到 PATH 最前面，保证 ``import data_loader`` 命中
-# 问题 3 的版本（而不是本目录下同名的 question4/data_loader.py）。
+# Implementation detail.
+# Implementation detail.
+# Implementation detail.
 _Q3_DIR = Path(__file__).resolve().parents[1] / "question3"
 sys.path.insert(0, str(_Q3_DIR))
 
@@ -60,7 +45,7 @@ def slot_label(t: int) -> str:
 
 
 def load_price_series() -> tuple:
-    """附件 4 的实际波动电价：返回 (DatetimeIndex, (365,144) 元/kWh)。"""
+    """load_price_series implementation."""
     df = pd.read_excel(PRICE_FILE, sheet_name="Sheet1")
     dates = pd.DatetimeIndex(pd.to_datetime(df.iloc[:, 0]).dt.normalize())
     price = df.iloc[:, 1:].to_numpy(dtype=float)
