@@ -27,6 +27,11 @@ from pred.price_fourier import PriceFourierPredictor  # noqa: E402
 from scenarios import pv_error_pool  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOLUTION_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SOLUTION_DIR))
+
+from excel_style import style_day_subtable  # noqa: E402
+
 PRICE_FILE = PROJECT_ROOT / "附件" / "附件4.xlsx"
 OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件5" / "result4-3.xlsx"
 
@@ -203,6 +208,8 @@ def main() -> None:
         df_adj.to_excel(writer, sheet_name="调整购电量", index=False)
         df_block.to_excel(writer, sheet_name="充放电量", index=False)
         df_emg.to_excel(writer, sheet_name="紧急购电量", index=False)
+        style_day_subtable(writer.book["充放电量"], date_column=1)
+        style_day_subtable(writer.book["紧急购电量"], date_column=1)
     print(f"\n结果已写入 {OUTPUT_FILE}")
 
 

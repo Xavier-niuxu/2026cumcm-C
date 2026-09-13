@@ -32,18 +32,15 @@ def build_purchase_sheet(ans: LPResult) -> pd.DataFrame:
     rows = []
     for t in range(n):
         rows.append({
-            "序号": t + 1,
             "时间段": _time_label(t),
             "购电量/kWh": ans.grid_purchase[t],
         })
 
     rows.append({
-        "序号": "",
         "时间段": "全天",
         "购电量/kWh": ans.grid_purchase.sum(),
     })
     rows.append({
-        "序号": "",
         "时间段": "全天购电费",
         "购电量/kWh": ans.purchase_cost,
     })
@@ -75,26 +72,6 @@ def build_storage_sheet(ans: LPResult) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_full_schedule_sheet(ans: LPResult) -> pd.DataFrame:
-    """build_full_schedule_sheet implementation."""
-    n = len(ans.grid_purchase)
-    dt = 1 / 6
-    return pd.DataFrame({
-        "step": np.arange(1, n + 1),
-        "时间段": [_time_label(t) for t in range(n)],
-        "电价/(元/kWh)": ans.price,
-        "负荷功率/kW": ans.load,
-        "光伏预测功率/kW": ans.pv_forecast,
-        "计划购电量/kWh": ans.grid_purchase,
-        "充电量/kWh": ans.charge,
-        "放电量/kWh": ans.discharge,
-        "0.1小时负荷电量/kWh": ans.load * dt,
-        "0.1小时光伏电量/kWh": ans.pv_forecast * dt,
-        "时段开始储电量/kWh": ans.soc_start,
-        "时段结束储电量/kWh": ans.soc_end,
-    })
-
-
 def save_result1(ans: LPResult, output_path: Path | str) -> Path:
     """save_result1 implementation."""
     output_path = Path(output_path)
@@ -102,12 +79,10 @@ def save_result1(ans: LPResult, output_path: Path | str) -> Path:
 
     purchase = build_purchase_sheet(ans)
     storage = build_storage_sheet(ans)
-    full = build_full_schedule_sheet(ans)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         purchase.to_excel(writer, sheet_name="计划购电量", index=False)
         storage.to_excel(writer, sheet_name="充放电量", index=False)
-        full.to_excel(writer, sheet_name="完整调度", index=False)
 
     return output_path
 

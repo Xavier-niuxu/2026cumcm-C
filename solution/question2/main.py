@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """main implementation."""
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,11 @@ from prediction import (
 from cost import calculate_cost, S_INIT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOLUTION_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SOLUTION_DIR))
+
+from excel_style import style_day_subtable  # noqa: E402
+
 OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件5" / "result2.xlsx"
 
 # Tuned day-ahead planning band.
@@ -213,6 +219,8 @@ def run_question2_full_year(predictor: BasePredictor) -> None:
         df_grid.to_excel(writer, sheet_name="计划购电量", index=False)
         df_charge.to_excel(writer, sheet_name="充放电量", index=False)
         df_emergency.to_excel(writer, sheet_name="紧急购电量", index=False)
+        style_day_subtable(writer.book["充放电量"], date_column=1)
+        style_day_subtable(writer.book["紧急购电量"], date_column=1)
 
     # Print summary
     total_grid = grid_purchase_all.sum()

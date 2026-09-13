@@ -23,6 +23,9 @@ Q2_DIR = SOLUTION_DIR / "question2"
 Q3_DIR = SOLUTION_DIR / "question3"
 Q4_DIR = SOLUTION_DIR / "question4"
 
+sys.path.insert(0, str(Q1_DIR))
+from data_loader import load_arrays  # noqa: E402
+
 
 def _env() -> dict:
     env = os.environ.copy()
@@ -171,13 +174,17 @@ def _read_result_sums(path: Path) -> dict:
 
 def _q1_static() -> dict:
     path = OUTPUT_DIR / "result1.xlsx"
-    full = pd.read_excel(path, sheet_name="完整调度")
+    purchase = pd.read_excel(path, sheet_name="计划购电量")
     blocks = pd.read_excel(path, sheet_name="充放电量")
+    _, price, load, pv = load_arrays()
     dt = 1.0 / 6.0
-    net_kwh = (full["负荷功率/kW"] - full["光伏预测功率/kW"]).to_numpy(float) * dt
-    direct_cost = float(np.dot(full["电价/(元/kWh)"].to_numpy(float), net_kwh))
-    grid = float(full["计划购电量/kWh"].sum())
-    purchase_cost = float(np.dot(full["电价/(元/kWh)"].to_numpy(float), full["计划购电量/kWh"].to_numpy(float)))
+    net_load = (load - pv) * dt
+    net_kwh = net_load.sum()
+    direct_cost = float(np.dot(price, net_load))
+    grid = float(purchase.loc[purchase["时间段"] == "全天", "购电量/kWh"].iloc[0])
+    purchase_cost = float(
+        purchase.loc[purchase["时间段"] == "全天购电费", "购电量/kWh"].iloc[0]
+    )
     rows = []
     for _, row in blocks.iterrows():
         rows.append({
