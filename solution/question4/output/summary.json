@@ -1,0 +1,84 @@
+{
+  "price_model": "HistGB_XGB_fallback",
+  "q42_winner": {
+    "problem": "Q4-2",
+    "name": "Q2_empirical_quantile",
+    "quantile": 0.8,
+    "price_model": "HistGB_XGB_fallback",
+    "plan_cost": 14128327.70331084,
+    "emergency_cost": 605428.4575182836,
+    "total_cost": 14733756.160829125,
+    "emergency_kwh": 93421.22509052795,
+    "events": 243.0,
+    "throughput": 11657901.019639947,
+    "terminal_soc": 7009.187408937216,
+    "violations": 0,
+    "daily_q95": 74810.29879557679,
+    "daily_max": 108768.00687494734
+  },
+  "q43_winner": {
+    "problem": "Q4-3",
+    "name": "stochastic_dynamic_price",
+    "scenario": "joint_block",
+    "risk_lambda": 0,
+    "alpha": 0.95,
+    "pv_updates": true,
+    "price_updates": true,
+    "plan_cost": 13393518.674185647,
+    "adjustment_cost": 588619.5054688071,
+    "emergency_cost": 405886.43312797986,
+    "total_cost": 14388024.612782434,
+    "emergency_kwh": 73703.79781844225,
+    "adjustment_kwh": 1546375.2688185102,
+    "events": 366.0,
+    "throughput": 12050300.039112896,
+    "terminal_soc": 6915.571395625099,
+    "violations": 0.0,
+    "daily_q95": 72980.1655066962,
+    "daily_max": 82166.88248473287,
+    "runtime_s": 124.42200620000222
+  },
+  "information": [
+    {
+      "pv_updates": false,
+      "price_updates": false,
+      "total_cost": 14488502.124008648,
+      "emergency_cost": 543136.1058097925
+    },
+    {
+      "pv_updates": true,
+      "price_updates": false,
+      "total_cost": 14387152.62966906,
+      "emergency_cost": 405945.8187382087
+    },
+    {
+      "pv_updates": false,
+      "price_updates": true,
+      "total_cost": 14488671.531761598,
+      "emergency_cost": 542746.1689830284
+    },
+    {
+      "pv_updates": true,
+      "price_updates": true,
+      "total_cost": 14388024.612782434,
+      "emergency_cost": 405886.43312797986
+    }
+  ],
+  "q42_q2_inherited_winner": {
+    "problem": "Q4-2",
+    "name": "Q2_empirical_quantile",
+    "quantile": 0.8,
+    "price_model": "HistGB_XGB_fallback",
+    "plan_cost": 14128327.70331084,
+    "emergency_cost": 605428.4575182836,
+    "total_cost": 14733756.160829125,
+    "emergency_kwh": 93421.22509052795,
+    "events": 243.0,
+    "throughput": 11657901.019639947,
+    "terminal_soc": 7009.187408937216,
+    "violations": 0,
+    "daily_q95": 74810.29879557679,
+    "daily_max": 108768.00687494734
+  },
+  "q42_winner_reason": "Q2 empirical-quantile framework has lowest realized cost after adding causal price forecast"
+}

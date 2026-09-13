@@ -1,0 +1,29 @@
+{
+  "price_forecast_best_by_economic_cost": {
+    "model": "persistence",
+    "total_cost": 15154576.609726889,
+    "plan_cost": 13529597.480424646,
+    "emergency_cost": 1624979.129302242,
+    "daily_q95": 77287.74995445249
+  },
+  "fixed_price_Q2_repriced": null,
+  "fixed_price_Q3_final_net_repriced": null,
+  "dynamic_price_Q43_final_net_repriced": 14296646.258061487,
+  "residual_correlation": [
+    [
+      0.9999999999999999,
+      -0.006526453348741786,
+      0.3156813892682129
+    ],
+    [
+      -0.006526453348741786,
+      0.9999999999999998,
+      -0.052247839853165425
+    ],
+    [
+      0.3156813892682129,
+      -0.05224783985316542,
+      1.0
+    ]
+  ]
+}

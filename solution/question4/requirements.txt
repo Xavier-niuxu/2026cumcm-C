@@ -1,0 +1,12 @@
+# 问题 4（参考包 q4.zip）复现所需依赖
+numpy>=2.0
+scipy>=1.14
+scikit-learn>=1.5
+pandas>=2.2
+openpyxl>=3.1
+
+# 可选：参考包另测了 LSTM/GRU/TCN（PyTorch）与随机森林以外的方法，
+# 本机未安装 torch / xgboost / lightgbm / prophet / statsmodels，
+# 相关方法已由 HistGB / Prophet-like / AR-GARCH 风格实现替代，
+# 未安装时 price_analysis.py 会自动跳过深度模型并记录在
+# output/price_model_availability.csv 中。

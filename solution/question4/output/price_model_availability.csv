@@ -1,0 +1,6 @@
+﻿method,status,fallback
+XGBoost,failed_import_missing_libomp,HistGradientBoosting squared loss
+LightGBM,failed_import_missing_libomp,HistGradientBoosting squared loss
+Quantile LightGBM,failed_import_missing_libomp,HistGradientBoosting quantile loss
+Prophet,package_not_installed,causal additive trend plus Fourier seasonality
+GARCH,AR-GARCH-style tested,AR mean plus EWMA conditional volatility
